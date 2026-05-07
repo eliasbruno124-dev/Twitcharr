@@ -32,7 +32,7 @@ DEFAULT_TTVLOL_PROXY_SERVERS = (
 DEFAULT_SETTINGS: dict[str, Any] = {
     "channel_group_name": "Twitch",
     "starting_channel_number": 9000,
-    "data_dir": "/data/plugins/dispatcharr_twitch_epg",
+    "data_dir": "/app/data/plugins/dispatcharr_twitch_epg",
     "include_offline": True,
     "use_profile_pic_when_just_chatting": True,
     "epg_refresh_interval_minutes": 10,

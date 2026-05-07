@@ -22,7 +22,7 @@ The plugin creates Twitch Channels/Streams in Dispatcharr, keeps a twitch2tuner-
 The downloaded file lives at:
 
 ```text
-/data/plugins/dispatcharr_twitch_epg/streamlink_plugins/twitch.py
+/app/data/plugins/dispatcharr_twitch_epg/streamlink_plugins/twitch.py
 ```
 
 It is loaded with Streamlink's `--plugin-dir`, so the system Streamlink install is never modified.
@@ -37,7 +37,7 @@ It is loaded with Streamlink's `--plugin-dir`, so the system Streamlink install 
 
 **File copy**
 
-1. Copy `dispatcharr_twitch_epg/` to `/data/plugins/` inside the Dispatcharr container.
+1. Copy `dispatcharr_twitch_epg/` to `/app/data/plugins/` inside the Dispatcharr container.
 2. Dispatcharr -> Plugins -> refresh -> enable the plugin.
 
 ## Setup
@@ -63,7 +63,7 @@ Click **Sync now**. The plugin will:
 - create a low-latency StreamProfile,
 - create a Twitch channel group,
 - create/update one Channel + Stream per login,
-- build `/data/plugins/dispatcharr_twitch_epg/twitch.xmltv`,
+- build `/app/data/plugins/dispatcharr_twitch_epg/twitch.xmltv`,
 - write the same guide data directly into Dispatcharr's EPG tables,
 - keep the scheduler enabled for future refreshes.
 
@@ -75,7 +75,7 @@ The generated StreamProfile is optimized for quick Twitch startup:
 streamlink
   --loglevel warning
   --stdout
-  --plugin-dir /data/plugins/dispatcharr_twitch_epg/streamlink_plugins
+  --plugin-dir /app/data/plugins/dispatcharr_twitch_epg/streamlink_plugins
   --http-timeout 10
   --stream-segment-attempts 2
   --stream-segment-timeout 6
