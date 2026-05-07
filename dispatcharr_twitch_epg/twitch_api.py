@@ -1,37 +1,50 @@
-"""Minimal Twitch Helix client used by the Dispatcharr Twitch EPG plugin.
+"""No-login Twitch metadata client for the Dispatcharr Twitch EPG plugin.
 
-Only the Client-Credentials OAuth flow is used: no user account, no redirect,
-no interactive consent. The token is cached in memory for ~50 minutes so the
-plugin doesn't hit /token on every refresh tick.
-
-Endpoints used:
-    POST https://id.twitch.tv/oauth2/token        (client_credentials)
-    GET  https://api.twitch.tv/helix/users        (login -> id, profile)
-    GET  https://api.twitch.tv/helix/streams      (live state, title, game_id)
-    GET  https://api.twitch.tv/helix/games        (game_id -> name, box art)
+The plugin deliberately does not ask the user for Twitch credentials. It uses
+the same public Twitch web GraphQL endpoint/client id pattern that Streamlink's
+Twitch plugin uses for anonymous channel metadata lookups.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 import requests
 
 logger = logging.getLogger(__name__)
 
-OAUTH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
-HELIX_BASE = "https://api.twitch.tv/helix"
-HELIX_BATCH = 100  # Twitch hard limit per call for users/streams/games
-
+GQL_URL = "https://gql.twitch.tv/gql"
+PUBLIC_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
+GQL_BATCH = 25
 DEFAULT_TIMEOUT = 15
 
-
-class TwitchAuthError(RuntimeError):
-    pass
+CHANNEL_QUERY = """
+query DispatcharrTwitchEPG($login: String!) {
+  user(login: $login) {
+    id
+    login
+    displayName
+    description
+    profileImageURL(width: 300)
+    stream {
+      id
+      title
+      createdAt
+      viewersCount
+      type
+      previewImageURL(width: 640, height: 360)
+      game {
+        id
+        name
+        boxArtURL(width: 272, height: 380)
+      }
+    }
+  }
+}
+"""
 
 
 @dataclass
@@ -61,146 +74,135 @@ class TwitchStream:
 class TwitchGame:
     id: str
     name: str
-    box_art_url: str = ""  # has {width}x{height} placeholders
-
-
-@dataclass
-class _Token:
-    access_token: str = ""
-    expires_at: float = 0.0  # epoch seconds
+    box_art_url: str = ""
 
 
 class TwitchClient:
-    """Thread-safe wrapper around the public Helix endpoints we need."""
+    """Small anonymous GraphQL client.
 
-    def __init__(self, client_id: str, client_secret: str, *, session: requests.Session | None = None):
-        if not client_id or not client_secret:
-            raise TwitchAuthError("client_id and client_secret are required")
-        self.client_id = client_id.strip()
-        self.client_secret = client_secret.strip()
+    The public methods mirror the previous Helix wrapper so the EPG builder can
+    stay simple: `get_users()`, `get_streams()`, and `get_games()`.
+    """
+
+    def __init__(self, *, session: requests.Session | None = None):
         self._session = session or requests.Session()
-        self._token = _Token()
-        self._lock = threading.Lock()
-
-    # --- auth -----------------------------------------------------------------
-
-    def _ensure_token(self) -> str:
-        with self._lock:
-            now = time.time()
-            if self._token.access_token and self._token.expires_at - 60 > now:
-                return self._token.access_token
-            resp = self._session.post(
-                OAUTH_TOKEN_URL,
-                data={
-                    "client_id": self.client_id,
-                    "client_secret": self.client_secret,
-                    "grant_type": "client_credentials",
-                },
-                timeout=DEFAULT_TIMEOUT,
-            )
-            if resp.status_code != 200:
-                raise TwitchAuthError(
-                    f"Twitch token request failed ({resp.status_code}): {resp.text[:200]}"
-                )
-            payload = resp.json()
-            self._token = _Token(
-                access_token=payload["access_token"],
-                expires_at=now + int(payload.get("expires_in", 3600)),
-            )
-            return self._token.access_token
+        self._users: dict[str, TwitchUser] = {}
+        self._streams: dict[str, TwitchStream] = {}
+        self._games: dict[str, TwitchGame] = {}
+        self._fetched_logins: set[str] = set()
 
     def _headers(self) -> dict:
         return {
-            "Client-Id": self.client_id,
-            "Authorization": f"Bearer {self._ensure_token()}",
+            "Client-ID": PUBLIC_CLIENT_ID,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 Dispatcharr-Twitch-EPG",
         }
 
-    # --- low-level get with retry --------------------------------------------
-
-    def _get(self, path: str, params: list[tuple[str, str]]) -> dict:
-        url = f"{HELIX_BASE}{path}"
+    def _post_gql(self, payload: list[dict]) -> list[dict]:
         for attempt in range(3):
-            resp = self._session.get(url, headers=self._headers(), params=params, timeout=DEFAULT_TIMEOUT)
-            if resp.status_code == 401 and attempt == 0:
-                # Token might have been revoked early — force re-auth and retry
-                with self._lock:
-                    self._token = _Token()
-                continue
+            resp = self._session.post(
+                GQL_URL,
+                headers=self._headers(),
+                json=payload,
+                timeout=DEFAULT_TIMEOUT,
+            )
             if resp.status_code == 429:
-                # Rate limited. Twitch returns Ratelimit-Reset (epoch s).
-                reset = float(resp.headers.get("Ratelimit-Reset", time.time() + 5))
-                wait = max(1.0, reset - time.time())
-                logger.warning("Twitch rate-limit hit, sleeping %.1fs", wait)
-                time.sleep(min(wait, 30))
+                wait = 2.0 * (attempt + 1)
+                logger.warning("Twitch GraphQL rate-limit hit, sleeping %.1fs", wait)
+                time.sleep(wait)
                 continue
             if resp.status_code >= 500 and attempt < 2:
-                time.sleep(1.5 * (attempt + 1))
+                time.sleep(1.0 * (attempt + 1))
                 continue
             if resp.status_code != 200:
                 raise RuntimeError(
-                    f"Helix GET {path} failed ({resp.status_code}): {resp.text[:200]}"
+                    f"Twitch GraphQL request failed ({resp.status_code}): {resp.text[:200]}"
                 )
-            return resp.json()
-        raise RuntimeError(f"Helix GET {path} failed after retries")
+            data = resp.json()
+            if isinstance(data, dict):
+                data = [data]
+            if not isinstance(data, list):
+                raise RuntimeError("Twitch GraphQL returned an unexpected payload")
+            return data
+        raise RuntimeError("Twitch GraphQL request failed after retries")
 
-    # --- public api -----------------------------------------------------------
+    def _fetch_channels(self, logins: Sequence[str]) -> None:
+        clean = [l.strip().lower() for l in logins if l and l.strip()]
+        missing = [login for login in clean if login not in self._fetched_logins]
+        for batch in _chunks(missing, GQL_BATCH):
+            payload = [
+                {
+                    "operationName": "DispatcharrTwitchEPG",
+                    "variables": {"login": login},
+                    "query": CHANNEL_QUERY,
+                }
+                for login in batch
+            ]
+            responses = self._post_gql(payload)
+            for login, item in zip(batch, responses):
+                self._fetched_logins.add(login)
+                errors = item.get("errors") or []
+                if errors:
+                    logger.warning("Twitch GraphQL warning for %s: %s", login, errors[:1])
+                    continue
+                user = ((item.get("data") or {}).get("user") or None)
+                if not user:
+                    logger.warning("Twitch login not found: %s", login)
+                    continue
+
+                normalized_login = (user.get("login") or login).lower()
+                twitch_user = TwitchUser(
+                    id=str(user.get("id") or ""),
+                    login=normalized_login,
+                    display_name=user.get("displayName") or normalized_login,
+                    description=user.get("description") or "",
+                    profile_image_url=user.get("profileImageURL") or "",
+                )
+                self._users[normalized_login] = twitch_user
+
+                stream = user.get("stream")
+                if stream:
+                    game = stream.get("game") or {}
+                    game_id = str(game.get("id") or "")
+                    if game_id:
+                        self._games[game_id] = TwitchGame(
+                            id=game_id,
+                            name=game.get("name") or "",
+                            box_art_url=game.get("boxArtURL") or "",
+                        )
+                    self._streams[normalized_login] = TwitchStream(
+                        user_id=twitch_user.id,
+                        user_login=normalized_login,
+                        user_name=twitch_user.display_name,
+                        title=stream.get("title") or "",
+                        game_id=game_id,
+                        game_name=game.get("name") or "",
+                        started_at=stream.get("createdAt") or "",
+                        viewer_count=int(stream.get("viewersCount") or 0),
+                        thumbnail_url=stream.get("previewImageURL") or "",
+                        is_live=True,
+                    )
 
     def get_users(self, logins: Sequence[str]) -> dict[str, TwitchUser]:
-        """Return {lower_login: TwitchUser} for every login that exists."""
-        out: dict[str, TwitchUser] = {}
-        clean = [l.strip().lower() for l in logins if l and l.strip()]
-        for batch in _chunks(clean, HELIX_BATCH):
-            payload = self._get("/users", [("login", login) for login in batch])
-            for item in payload.get("data", []):
-                u = TwitchUser(
-                    id=str(item["id"]),
-                    login=item["login"],
-                    display_name=item.get("display_name") or item["login"],
-                    description=item.get("description") or "",
-                    profile_image_url=item.get("profile_image_url") or "",
-                )
-                out[u.login.lower()] = u
-        return out
+        self._fetch_channels(logins)
+        return {login: self._users[login] for login in _lower_existing(logins, self._users)}
 
     def get_streams(self, user_logins: Sequence[str]) -> dict[str, TwitchStream]:
-        """Return {lower_login: TwitchStream} for every login currently live."""
-        out: dict[str, TwitchStream] = {}
-        clean = [l.strip().lower() for l in user_logins if l and l.strip()]
-        for batch in _chunks(clean, HELIX_BATCH):
-            payload = self._get("/streams", [("user_login", login) for login in batch])
-            for item in payload.get("data", []):
-                s = TwitchStream(
-                    user_id=str(item["user_id"]),
-                    user_login=item["user_login"],
-                    user_name=item.get("user_name") or item["user_login"],
-                    title=item.get("title") or "",
-                    game_id=str(item.get("game_id") or ""),
-                    game_name=item.get("game_name") or "",
-                    started_at=item.get("started_at") or "",
-                    viewer_count=int(item.get("viewer_count") or 0),
-                    thumbnail_url=item.get("thumbnail_url") or "",
-                    is_live=True,
-                )
-                out[s.user_login.lower()] = s
-        return out
+        self._fetch_channels(user_logins)
+        return {login: self._streams[login] for login in _lower_existing(user_logins, self._streams)}
 
     def get_games(self, ids: Iterable[str]) -> dict[str, TwitchGame]:
-        out: dict[str, TwitchGame] = {}
-        clean = [g for g in {str(i) for i in ids if i}]
-        for batch in _chunks(clean, HELIX_BATCH):
-            payload = self._get("/games", [("id", gid) for gid in batch])
-            for item in payload.get("data", []):
-                out[str(item["id"])] = TwitchGame(
-                    id=str(item["id"]),
-                    name=item.get("name") or "",
-                    box_art_url=item.get("box_art_url") or "",
-                )
-        return out
+        return {str(gid): self._games[str(gid)] for gid in ids if str(gid) in self._games}
 
 
 def _chunks(seq: Sequence[str], size: int):
     for i in range(0, len(seq), size):
         yield seq[i : i + size]
+
+
+def _lower_existing(logins: Iterable[str], values: dict) -> list[str]:
+    return [login.strip().lower() for login in logins if login and login.strip().lower() in values]
 
 
 def parse_login_list(raw: str) -> list[str]:

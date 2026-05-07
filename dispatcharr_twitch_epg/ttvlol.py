@@ -3,7 +3,7 @@
 Source: https://github.com/2bc4/streamlink-ttvlol/releases/latest/download/twitch.py
 
 The downloaded file lives in <data_dir>/streamlink_plugins/twitch.py and is
-fed to streamlink via --plugin-dirs (so the system-wide streamlink install is
+fed to streamlink via --plugin-dir (so the system-wide streamlink install is
 never modified). Updates are throttled by an ETag and a per-day stamp so the
 daily Celery beat job is cheap to run.
 """

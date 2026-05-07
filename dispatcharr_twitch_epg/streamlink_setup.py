@@ -36,7 +36,11 @@ def build_streamlink_parameters(
     """Return the value for StreamProfile.parameters.
 
     Streamlink command line:
-        streamlink --stdout --plugin-dirs <dir> \
+        streamlink --loglevel warning --stdout --plugin-dir <dir> \
+            --http-timeout 10 \
+            --stream-segment-attempts 2 \
+            --stream-segment-timeout 6 \
+            --stream-timeout 20 \
             --twitch-disable-ads \
             --twitch-proxy-playlist=<servers> \
             --twitch-proxy-playlist-fallback \
@@ -49,13 +53,18 @@ def build_streamlink_parameters(
     we use shlex.quote where values can contain commas/colons.
     """
     parts: list[str] = [
+        "--loglevel", "warning",
         "--stdout",
-        "--plugin-dirs", plugin_dirs,
+        "--plugin-dir", plugin_dirs,
+        "--http-timeout", "10",
+        "--stream-segment-attempts", "2",
+        "--stream-segment-timeout", "6",
+        "--stream-timeout", "20",
         "--twitch-disable-ads",
         "--twitch-proxy-playlist-fallback",
         "--http-header", "User-Agent={userAgent}",
         "--retry-streams", "1",
-        "--retry-max", "3",
+        "--retry-max", "2",
     ]
     if proxy_servers.strip():
         parts.extend(["--twitch-proxy-playlist", proxy_servers.strip()])
@@ -131,14 +140,46 @@ def _custom_m3u_account():
     from apps.m3u.models import M3UAccount
 
     try:
-        return M3UAccount.get_custom_account()
+        account = M3UAccount.get_custom_account()
     except M3UAccount.DoesNotExist:
         # Fallback for unusual installs: create one if it isn't there.
         account, _ = M3UAccount.objects.get_or_create(
             name="custom",
             defaults={"is_active": True, "locked": True, "max_streams": 0},
         )
-        return account
+
+    if not account.is_active or account.max_streams != 0:
+        account.is_active = True
+        account.max_streams = 0
+        account.save(update_fields=["is_active", "max_streams"])
+
+    _ensure_custom_account_profile(account)
+    return account
+
+
+def _ensure_custom_account_profile(account):
+    from apps.m3u.models import M3UAccountProfile
+
+    profile, _ = M3UAccountProfile.objects.get_or_create(
+        m3u_account=account,
+        is_default=True,
+        defaults={
+            "name": f"{account.name} Default",
+            "max_streams": 0,
+            "is_active": True,
+            "search_pattern": "^(.*)$",
+            "replace_pattern": "$1",
+        },
+    )
+    updates = []
+    if not profile.is_active:
+        profile.is_active = True
+        updates.append("is_active")
+    if profile.max_streams != 0:
+        profile.max_streams = 0
+        updates.append("max_streams")
+    if updates:
+        profile.save(update_fields=updates)
 
 
 def _next_channel_number(starting_from: float, used: set[float]) -> float:
