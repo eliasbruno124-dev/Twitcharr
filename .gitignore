@@ -1,5 +1,23 @@
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Auto-downloaded streamlink-ttvlol plugin (kept fresh by the plugin itself)
+twitcharr/streamlink_plugins/
+twitcharr/streamlink_plugins/**
+
+# Plugin runtime data (XMLTV, scheduler state, locks, self-update state)
+twitcharr/twitch.xmltv
+twitcharr/.scheduler_state.json
+twitcharr/.self_update_state.json
+twitcharr/.*.lock
+twitcharr/.cache/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

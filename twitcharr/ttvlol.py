@@ -90,7 +90,7 @@ def update_ttvlol(data_dir: str, *, force: bool = False) -> TtvlolUpdateResult:
     except Exception:
         pass
 
-    headers = {"User-Agent": "Dispatcharr-TwitchEPG-Plugin"}
+    headers = {"User-Agent": "Twitcharr"}
     if not force and state.get("etag") and os.path.exists(target):
         headers["If-None-Match"] = state["etag"]
 

@@ -1,0 +1,23 @@
+FILENAME: 07-discord-notification.png
+USED IN README: in the "Discord notifications" section
+
+WHAT TO CAPTURE:
+A real Discord embed posted by Twitcharr when a streamer goes live. This
+sells the social/notification angle.
+
+CHECKLIST:
+- Configure the Discord webhook in Twitcharr settings
+- Click "Send Discord test" OR wait for an actual go-live event
+- In the Discord channel, the embed should show:
+    * "Twitcharr" as the bot/webhook name
+    * Title: "🔴 <Streamer> ist jetzt live!"
+    * Twitch-purple left border (#9146FF)
+    * Description: the actual stream title
+    * Two inline fields: "Spielt: <Game>" and "Zuschauer: <count>"
+    * Thumbnail (top right): streamer's profile picture
+    * Large image: live preview frame from the stream
+    * Footer: "Twitcharr"
+- Crop: just the embed message in Discord, not the whole Discord client
+- Best with a real popular streamer so the preview looks good
+
+RESOLUTION: 1024×600 PNG (Discord embeds are wider than tall)

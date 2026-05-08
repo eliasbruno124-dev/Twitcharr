@@ -1,54 +1,316 @@
 {
-  "name": "Twitch EPG",
-  "version": "0.2.0",
-  "description": "One-field Twitch plugin for Dispatcharr: enter Twitch logins only. It auto-updates streamlink-ttvlol daily, creates low-latency Twitch streams, and keeps a twitch2tuner-style XMLTV guide fresh.",
-  "author": "Dispatcharr Twitch EPG",
-  "help_url": "https://github.com/eliasbruno124-dev/Dispatcharr-Twitch-EPG",
+  "name": "Twitcharr",
+  "version": "1.2.0",
+  "description": "Ad-free Twitch live-TV lineup for Dispatcharr. Mix logins with discovery tokens, get bandwidth-aware adaptive quality so playback is the highest your line can sustain without stuttering, fastest-possible startup, an always-on placeholder so Emby/Jellyfin Live TV never disappears, live preview thumbnails as channel icons, Discord notifications when a streamer goes live, comprehensive health-check and proxy diagnostics, daily streamlink-ttvlol auto-updates, automatic Emby/Jellyfin guide refresh, and a self-updater pulled straight from GitHub.",
+  "author": "eliasbruno124",
+  "help_url": "https://github.com/eliasbruno124/Twitcharr",
   "fields": [
     {
       "id": "channels",
-      "label": "Twitch logins",
+      "label": "Twitch logins / discovery",
       "type": "text",
       "default": "",
-      "placeholder": "gronkh\npapaplatte\nknossi\nmontanablack88"
+      "placeholder": "gronkh\npapaplatte\ntop:de:25\ngame:Just Chatting:10\nsearch:knossi",
+      "description": "One token per line. Plain logins, full https://twitch.tv/<login> URLs, OR discovery tokens: 'top' (10 globally), 'top:de:25' (top 25 German), 'game:<name>:N' (top N in a category), 'search:<query>:N' (smooth-typing channel search)."
+    },
+    {
+      "id": "discovery_top_languages",
+      "label": "Trending — countries (ISO codes)",
+      "type": "text",
+      "default": "",
+      "placeholder": "de, en, fr",
+      "description": "Comma-separated ISO 639-1 language codes. The plugin auto-adds the top N live streams from each language on every refresh. Examples: 'de' (German only), 'de,en' (German + English), 'es,fr,it,pt'. Set 'Top streams per country' below to control N."
+    },
+    {
+      "id": "discovery_top_count",
+      "label": "Trending — top streams per country",
+      "type": "number",
+      "default": 0,
+      "description": "How many top live streams to pull from each ISO country code above. 0 disables this. Most users want 10–25."
+    },
+    {
+      "id": "discovery_trending_count",
+      "label": "Trending — global top streams",
+      "type": "number",
+      "default": 0,
+      "description": "Add the top N globally-trending live streams to the lineup on every refresh. 0 disables. Use sparingly — global trending is often dominated by the same few mega-streamers."
+    },
+    {
+      "id": "channel_group_name",
+      "label": "Channel group name",
+      "type": "text",
+      "default": "Twitch",
+      "description": "Dispatcharr channel group that all Twitch channels are placed in."
+    },
+    {
+      "id": "starting_channel_number",
+      "label": "Starting channel number",
+      "type": "number",
+      "default": 9000,
+      "description": "First channel number to use when new channels are created. Existing numbers are never overwritten."
+    },
+    {
+      "id": "stream_quality",
+      "label": "Stream quality",
+      "type": "select",
+      "default": "adaptive",
+      "options": ["adaptive", "best", "1080p60", "1080p", "720p60", "720p", "480p", "360p", "160p", "worst"],
+      "description": "'adaptive' picks the highest variant your bandwidth can sustain (run 'Measure bandwidth' first, or set 'Connection bandwidth' below). Any other value is passed straight to streamlink."
+    },
+    {
+      "id": "connection_bandwidth_mbps",
+      "label": "Connection bandwidth (Mbps)",
+      "type": "number",
+      "default": 0,
+      "description": "Used only when 'Stream quality' is 'adaptive'. 0 = use the most recent 'Measure bandwidth' result (or a safe mid-tier fallback if never measured). Set a manual value if you want to pin a specific upper bound."
+    },
+    {
+      "id": "bandwidth_safety_margin_pct",
+      "label": "Bandwidth safety margin (%)",
+      "type": "number",
+      "default": 50,
+      "description": "Headroom on top of Twitch's nominal variant bitrate when picking the adaptive quality. 50% (default) covers normal Twitch bitrate spikes — increase to 70-100 if you ever see stutter, decrease to 25-40 if you want to push closer to your line speed."
+    },
+    {
+      "id": "fast_startup",
+      "label": "Fastest possible startup",
+      "type": "boolean",
+      "default": true,
+      "description": "Tunes Streamlink for the shortest channel-switch-to-first-frame time: --hls-live-edge 1, lower segment timeouts, no retries on the first segment, 4 segment threads. Combine with 'adaptive' quality so the chosen variant is already conservative enough that aggressive startup never causes mid-stream stutter."
+    },
+    {
+      "id": "enable_low_latency",
+      "label": "Low-latency mode",
+      "type": "boolean",
+      "default": true,
+      "description": "Enables --twitch-low-latency, --hls-live-edge 1-2, --stream-segment-threads 3-4, --hls-segment-stream-data."
+    },
+    {
+      "id": "include_offline",
+      "label": "Show offline channels",
+      "type": "boolean",
+      "default": true,
+      "description": "When ON, offline channels stay in the lineup with an offline placeholder. When OFF, offline channels are removed from Dispatcharr while not streaming and re-created when they go live."
+    },
+    {
+      "id": "offline_icon_url",
+      "label": "Offline channel icon",
+      "type": "text",
+      "default": "",
+      "placeholder": "https://example.com/offline.png",
+      "description": "Icon for offline channels and the placeholder channel. Leave empty to show no image at all when offline."
+    },
+    {
+      "id": "keep_placeholder",
+      "label": "Always keep a 'no streams online' channel",
+      "type": "boolean",
+      "default": true,
+      "description": "When no Twitch user is currently live, a sentinel channel is added so Emby/Jellyfin Live TV never collapses to an empty section. The channel disappears as soon as any real streamer goes live."
+    },
+    {
+      "id": "use_live_thumbnails",
+      "label": "Use live preview thumbnails as channel icon",
+      "type": "boolean",
+      "default": true,
+      "description": "When ON, the channel icon for a live streamer becomes their actual live preview frame (refreshed every cycle, cache-busted). When OFF, falls back to game box art / profile picture. Strongly recommended ON — the Live TV grid then shows what's literally on screen right now."
+    },
+    {
+      "id": "use_profile_pic_when_just_chatting",
+      "label": "Use profile picture for Just Chatting",
+      "type": "boolean",
+      "default": true,
+      "description": "Only used when live preview thumbnails are OFF: shows the streamer's profile picture instead of the Just Chatting box art."
+    },
+    {
+      "id": "epg_refresh_interval_minutes",
+      "label": "EPG refresh interval (minutes)",
+      "type": "number",
+      "default": 2,
+      "description": "How often the scheduler refreshes live status, titles, viewer counts and game art. Minimum 1 minute. Twitch's GraphQL endpoint handles 2-minute polling comfortably for typical lineup sizes."
+    },
+    {
+      "id": "ttvlol_update_time",
+      "label": "Daily ttv.lol update time",
+      "type": "text",
+      "default": "04:30",
+      "placeholder": "04:30",
+      "description": "Server local time (HH:MM) at which streamlink-ttvlol twitch.py is checked for updates once per day."
+    },
+    {
+      "id": "ttvlol_proxy_servers",
+      "label": "ttv.lol proxy servers",
+      "type": "text",
+      "default": "https://eu.luminous.dev,https://eu2.luminous.dev,https://lb-eu.cdn-perfprod.com,https://lb-eu2.cdn-perfprod.com",
+      "placeholder": "https://eu.luminous.dev,https://eu2.luminous.dev",
+      "description": "Comma-separated list of ttv.lol playlist proxy URLs passed to --twitch-proxy-playlist. Clear to disable proxy."
+    },
+    {
+      "id": "schedule_enabled",
+      "label": "Enable automatic scheduler",
+      "type": "boolean",
+      "default": true,
+      "description": "When enabled, EPG and channel data refresh on the interval above and ttv.lol updates daily. Disable only for manual-only setups."
+    },
+    {
+      "id": "media_server_url",
+      "label": "Emby / Jellyfin URL",
+      "type": "text",
+      "default": "",
+      "placeholder": "http://jellyfin:8096",
+      "description": "Optional. Base URL of an Emby or Jellyfin server. After every EPG refresh the plugin triggers that server's 'Refresh Guide' scheduled task so Live TV picks up the new Twitch data immediately."
+    },
+    {
+      "id": "media_server_api_key",
+      "label": "Emby / Jellyfin API key",
+      "type": "text",
+      "default": "",
+      "placeholder": "abcdef0123456789...",
+      "description": "API key for the server above (Dashboard → API Keys). Required when an Emby/Jellyfin URL is set."
+    },
+    {
+      "id": "discord_webhook_url",
+      "label": "Discord webhook for go-live alerts",
+      "type": "text",
+      "default": "",
+      "placeholder": "https://discord.com/api/webhooks/.../...",
+      "description": "Optional. Posts a rich embed to this Discord channel every time a streamer in your lineup transitions from offline → live. Supports up to 10 simultaneous notifications per cycle. Use 'Send Discord test' to verify the webhook."
+    },
+    {
+      "id": "auto_check_updates",
+      "label": "Auto-check for plugin updates",
+      "type": "boolean",
+      "default": true,
+      "description": "When ON, the plugin polls GitHub every 6 hours for new releases. Updates are NOT applied automatically — use the 'Apply update' action when you're ready."
+    },
+    {
+      "id": "data_dir",
+      "label": "Data directory",
+      "type": "text",
+      "default": "/app/data/plugins/twitcharr",
+      "description": "Where the plugin stores twitch.xmltv and the downloaded streamlink-ttvlol plugin. Change only if you use a custom Dispatcharr data path."
     }
   ],
   "actions": [
     {
       "id": "setup",
       "label": "Sync Twitch lineup",
-      "description": "One-click sync: updates ttv.lol if needed, creates/updates channels and streams, writes the EPG, and keeps the automatic daily updater enabled.",
+      "description": "Full one-click setup: ttv.lol → EPG → channels → media-server refresh. Idempotent.",
       "button_label": "Sync now",
       "button_variant": "filled",
       "button_color": "blue"
     },
     {
       "id": "refresh_epg",
-      "label": "Refresh guide now",
-      "description": "Refreshes live/offline status, current game, stream title, icons, XMLTV and Dispatcharr EPG rows.",
+      "label": "Refresh guide",
+      "description": "Fetches current live status, titles, games, viewer counts and icons from Twitch, updates the XMLTV file and Dispatcharr's EPG rows, and triggers an Emby/Jellyfin guide refresh if configured.",
       "button_label": "Refresh EPG",
       "button_variant": "filled",
       "button_color": "green"
     },
     {
+      "id": "sync_channels",
+      "label": "Sync channels only",
+      "description": "Re-creates or updates Channel and Stream rows without touching the EPG guide. Useful after changing quality or proxy settings.",
+      "button_label": "Sync channels",
+      "button_variant": "outline",
+      "button_color": "blue"
+    },
+    {
+      "id": "run_all",
+      "label": "Full refresh",
+      "description": "Runs all three steps in sequence: ttv.lol update check, channel sync, and EPG refresh — Twitch is fetched only once per cycle.",
+      "button_label": "Run full refresh",
+      "button_variant": "outline",
+      "button_color": "green"
+    },
+    {
+      "id": "status",
+      "label": "System status / health-check",
+      "description": "Top-to-bottom diagnostic: scheduler, last refresh times, Twitch API reachability, streamlink presence, ttv.lol freshness, all proxy latencies, Emby/Jellyfin handshake, channel/stream counts.",
+      "button_label": "Show status",
+      "button_variant": "filled",
+      "button_color": "indigo"
+    },
+    {
+      "id": "test_proxies",
+      "label": "Test ttv.lol proxies",
+      "description": "Probes every configured ttv.lol proxy URL in parallel and reports HTTP code + latency. Fast (3-5s) — use it to spot dead proxies that slow down channel switching.",
+      "button_label": "Test proxies",
+      "button_variant": "outline",
+      "button_color": "indigo"
+    },
+    {
+      "id": "test_discord",
+      "label": "Send Discord test notification",
+      "description": "Posts a single test embed to the configured Discord webhook so you can verify it works without waiting for a real go-live event.",
+      "button_label": "Send Discord test",
+      "button_variant": "outline",
+      "button_color": "pink"
+    },
+    {
+      "id": "measure_bandwidth",
+      "label": "Measure bandwidth",
+      "description": "Runs three back-to-back downloads from Cloudflare and uses the slowest reading to pick the adaptive quality chain. The result is persisted, so future syncs use it automatically when 'Stream quality' is set to 'adaptive'.",
+      "button_label": "Measure bandwidth",
+      "button_variant": "filled",
+      "button_color": "teal"
+    },
+    {
+      "id": "refresh_media_server",
+      "label": "Refresh Emby / Jellyfin guide",
+      "description": "Manually triggers the 'Refresh Guide' scheduled task on the configured Emby or Jellyfin server. Useful for testing the API key.",
+      "button_label": "Refresh media server",
+      "button_variant": "outline",
+      "button_color": "violet"
+    },
+    {
       "id": "update_ttvlol",
-      "label": "Repair ttv.lol now",
-      "description": "Manually downloads the latest streamlink-ttvlol twitch.py. Normally this happens automatically once per day.",
+      "label": "Force-update ttv.lol",
+      "description": "Downloads the latest streamlink-ttvlol twitch.py regardless of the cached ETag. Use this if streams stop working and the daily updater has not run yet.",
       "button_label": "Update ttv.lol",
       "button_variant": "outline",
       "button_color": "orange"
     },
     {
+      "id": "check_updates",
+      "label": "Check for plugin update",
+      "description": "Queries GitHub for the latest release of this plugin and reports whether a newer version exists.",
+      "button_label": "Check for update",
+      "button_variant": "outline",
+      "button_color": "cyan"
+    },
+    {
+      "id": "apply_update",
+      "label": "Apply plugin update",
+      "description": "Downloads the latest release from GitHub and overwrites the plugin's code in-place. After applying, reload Dispatcharr's plugin list (or restart the container) for the new code to take effect.",
+      "button_label": "Apply update",
+      "button_variant": "filled",
+      "button_color": "cyan",
+      "confirm": {
+        "required": true,
+        "title": "Update the plugin from GitHub?",
+        "message": "This downloads the latest Twitcharr release from GitHub and overwrites the plugin's Python code. Your settings, the XMLTV file, and the cached streamlink-ttvlol plugin are preserved."
+      }
+    },
+    {
+      "id": "donate",
+      "label": "♥ Donate / Support",
+      "description": "Opens the donation / sponsor link for this plugin's author. Thank you!",
+      "button_label": "Donate",
+      "button_variant": "outline",
+      "button_color": "pink"
+    },
+    {
       "id": "uninstall",
-      "label": "Uninstall managed objects",
-      "description": "Removes the EPG source, StreamProfile, and all Channels created by this plugin. Does not delete the plugin itself.",
+      "label": "Remove managed objects",
+      "description": "Deletes the StreamProfile, EPG source, and all Channels and Streams created by this plugin. The plugin itself and its settings are not removed.",
       "button_label": "Uninstall",
       "button_variant": "outline",
       "button_color": "red",
       "confirm": {
         "required": true,
-        "title": "Remove managed objects?",
-        "message": "This deletes the Twitch StreamProfile, EPG source, and every Channel/Stream this plugin created. The plugin and its settings stay in place."
+        "title": "Remove all managed objects?",
+        "message": "This permanently deletes the Twitch StreamProfile, EPG source, and every Channel and Stream this plugin created. The plugin and its settings remain in place."
       }
     }
   ]

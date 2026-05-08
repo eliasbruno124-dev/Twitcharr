@@ -1,0 +1,19 @@
+FILENAME: 03-channel-grid.png
+USED IN README: after the "Setup" section
+
+WHAT TO CAPTURE:
+The Live TV channel grid in Emby or Jellyfin showing the synced Twitch
+channels. This is the "result" shot — proves the plugin works end-to-end.
+
+CHECKLIST:
+- Open Emby or Jellyfin → Live TV → Channels (grid view)
+- Several Twitch channels visible at once (5+ if possible)
+- Each tile should show:
+    * the streamer's display name (Gronkh, Papaplatte, Knossi, ...)
+    * the live preview thumbnail as the channel icon (NOT the static profile pic)
+    * the "Now playing" line below: "🔴 Gronkh • Just Chatting" style
+- Mix of live (with thumbnails) and offline (with offline icon or none)
+  if possible
+- Make sure the channel names are readable — NOT cropped
+
+RESOLUTION: 1600×900 or 1280×720 PNG
