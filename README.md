@@ -121,7 +121,8 @@ Guide detail screenshot:
 | Connection bandwidth (Mbps) | `0` | `0` uses the last measured value or a conservative fallback. |
 | Bandwidth safety margin (%) | `50` | Extra headroom used by adaptive quality. |
 | Show offline channels | on | Keeps offline streamers in the lineup. Turn off to prune them while offline. |
-| Offline channel icon | built-in card | Image used for offline channels and the placeholder. Enter `none` to disable. |
+| Offline channel icon | default HTTPS card | Image used for offline channels and the placeholder. Enter `none` to disable. |
+| Live preview thumbnails | off | Uses stable game/profile artwork by default. Turn on only if you want Twitch preview frames as icons. |
 | Always keep no-streams placeholder | on | Keeps one placeholder channel when nobody is live. |
 | EPG refresh interval | `2` minutes | Scheduler interval for Twitch status and guide refresh. |
 | Daily ttv.lol update time | `04:30` | Scheduler time for the daily forced `twitch.py` refresh. |
@@ -143,7 +144,7 @@ Quality settings screenshot:
 |---|---|
 | Sync now | Full setup and refresh. |
 | Refresh guide | Refresh Twitch status, XMLTV and EPG rows. |
-| Sync channels | Create, update or prune Channels and Streams without rewriting guide data. |
+| Sync channels | Writes current guide rows first, then creates, updates or prunes Channels and Streams. |
 | Full refresh | ttv.lol check, channel sync and guide refresh. |
 | Show status | Full health report. |
 | Test connection | Settings validation, anonymous Twitch check, optional Emby/Jellyfin check and Streamlink check. |
@@ -154,7 +155,7 @@ Quality settings screenshot:
 | Update ttv.lol | Forces a fresh `twitch.py` download. |
 | Check for plugin update | Checks GitHub Releases. |
 | Apply plugin update | Downloads and applies the latest release. |
-| Donate via PayPal | Returns the PayPal support link. |
+| Donate via PayPal | Requests the PayPal support page. Dispatcharr currently shows plugin action results as notifications. |
 | Uninstall | Removes managed Dispatcharr objects. Plugin files and settings remain. |
 
 Health-check screenshot:
@@ -165,7 +166,7 @@ Health-check screenshot:
 
 `Show offline channels` controls real streamer channels:
 
-- ON: offline streamers stay visible with offline guide data.
+- ON: offline streamers stay visible with offline guide data while at least one real Twitch channel is live. If nobody is live and the placeholder is enabled, Twitcharr shows only the placeholder.
 - OFF: offline streamers are removed during sync and recreated when they go live.
 
 `Always keep no-streams placeholder` controls the placeholder:
@@ -183,7 +184,8 @@ Instead it writes guide data where TV clients expect it:
 - `<data_dir>/twitch.xmltv`
 - channel icons
 - programme icons in XMLTV when an icon is available
-- live preview thumbnails as cache-busted channel icons when enabled
+- rich programme titles with streamer, category and current Twitch viewer count
+- stable game/profile artwork by default; optional cache-busted live preview thumbnails when enabled
 
 For Emby and Jellyfin, the plugin triggers the server's Refresh Guide task after scheduled EPG refreshes. That is still required because those servers cache Live TV guide data.
 

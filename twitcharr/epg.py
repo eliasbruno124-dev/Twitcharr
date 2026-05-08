@@ -43,6 +43,12 @@ def live_preview_url(login: str, *, width: int = 640, height: int = 360, cache_b
     return url
 
 
+def _viewer_label(viewer_count: int) -> str:
+    if not viewer_count:
+        return ""
+    return f"{viewer_count:,} Zuschauer".replace(",", ".")
+
+
 def _format_uptime(started_iso: str, now: datetime) -> str:
     if not started_iso:
         return ""
@@ -151,13 +157,16 @@ def build_entries(
 
             stream_title = (s.title or "").strip()
             uptime_str = _format_uptime(s.started_at, datetime.now(timezone.utc))
+            viewer_label = _viewer_label(s.viewer_count)
 
             # User-facing programme title — always leads with the streamer
-            # name so the channel grid says WHO is live, not just the game.
-            if game_name:
-                title = f"🔴 {u.display_name} • {game_name}"
-            else:
-                title = f"🔴 {u.display_name} • Live"
+            # name and puts viewers in the visible title, because many Live TV
+            # grids hide programme descriptions.
+            title_parts = [f"🔴 {u.display_name}", game_name or "Live"]
+            if viewer_label:
+                title_parts.append(viewer_label)
+            title = " • ".join(title_parts)
+            channel_name = f"{u.display_name} ({viewer_label})" if viewer_label else u.display_name
 
             description_parts: list[str] = []
             if stream_title:
@@ -167,10 +176,11 @@ def build_entries(
                 meta_line.append(f"Spielt: {game_name}")
             if uptime_str:
                 meta_line.append(f"Live seit {uptime_str}")
-            if s.viewer_count:
-                meta_line.append(f"{s.viewer_count:,} Zuschauer".replace(",", "."))
+            if viewer_label:
+                meta_line.append(viewer_label)
             if meta_line:
                 description_parts.append(" • ".join(meta_line))
+            description_parts.append(f"https://twitch.tv/{login}")
             description = "\n".join(description_parts)
             started_at = s.started_at
             viewers = s.viewer_count
@@ -179,21 +189,28 @@ def build_entries(
             icon_url = offline_icon if offline_icon else ""
             game_name = ""
             title = f"⚫ {u.display_name} (offline)"
+            channel_name = f"{u.display_name} (offline)"
             description = (u.description or "").strip()
+            stream_title = ""
+            viewer_label = ""
             started_at = ""
             viewers = 0
 
         entries.append({
             "login": login,
             "display_name": u.display_name,
+            "channel_name": channel_name,
             "profile_image_url": u.profile_image_url,
             "icon_url": icon_url,
             "description": description,
             "live": live,
             "title": title,
+            "stream_title": stream_title,
             "game_name": game_name,
             "started_at": started_at,
             "viewer_count": viewers,
+            "viewer_label": viewer_label,
+            "twitch_url": f"https://twitch.tv/{login}",
         })
     return entries
 
@@ -227,7 +244,10 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
 
     for e in entries:
         ch = ET.SubElement(tv, "channel", {"id": channel_tvg_id(e["login"])})
-        ET.SubElement(ch, "display-name").text = e["display_name"]
+        channel_name = e.get("channel_name") or e["display_name"]
+        ET.SubElement(ch, "display-name").text = channel_name
+        if channel_name != e["display_name"]:
+            ET.SubElement(ch, "display-name").text = e["display_name"]
         ET.SubElement(ch, "display-name").text = e["login"]
         if e["icon_url"]:
             ET.SubElement(ch, "icon", {"src": e["icon_url"]})
@@ -248,10 +268,16 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
             "channel": channel_tvg_id(e["login"]),
         })
         ET.SubElement(prog, "title", {"lang": "en"}).text = e["title"]
+        if e.get("stream_title"):
+            ET.SubElement(prog, "sub-title", {"lang": "en"}).text = e["stream_title"]
         if e["description"]:
             ET.SubElement(prog, "desc", {"lang": "en"}).text = e["description"]
         if e["game_name"]:
             ET.SubElement(prog, "category", {"lang": "en"}).text = e["game_name"]
+        if e.get("live"):
+            ET.SubElement(prog, "category", {"lang": "en"}).text = "Live"
+        if e.get("twitch_url"):
+            ET.SubElement(prog, "url").text = e["twitch_url"]
         if e["icon_url"]:
             ET.SubElement(prog, "icon", {"src": e["icon_url"]})
         programme_count += 1
@@ -301,7 +327,7 @@ def upsert_db(entries: list[dict], data_dir: str) -> dict:
             tvg_id=tvg,
             epg_source=source,
             defaults={
-                "name": e["display_name"],
+                "name": e.get("channel_name") or e["display_name"],
                 "icon_url": e["icon_url"] or None,
             },
         )
@@ -334,13 +360,16 @@ def upsert_db(entries: list[dict], data_dir: str) -> dict:
             start_time=started,
             end_time=end,
             title=e["title"],
-            sub_title=e["game_name"] or "",
+            sub_title=e.get("stream_title") or e["game_name"] or "",
             description=e["description"] or "",
             custom_properties={
                 "twitch_login": e["login"],
                 "twitch_live": e["live"],
                 "twitch_viewers": e["viewer_count"],
                 "twitch_display_name": e["display_name"],
+                "twitch_game_name": e["game_name"],
+                "twitch_stream_title": e.get("stream_title") or "",
+                "twitch_url": e.get("twitch_url") or f"https://twitch.tv/{e['login']}",
             },
         ))
 

@@ -1,6 +1,6 @@
 {
   "name": "Twitcharr",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "description": "Twitch live-TV lineup for Dispatcharr. Add Twitch channel names by comma or line break, optionally use discovery tokens, then sync Channels, Streams and XMLTV guide rows. Twitch metadata is fetched anonymously; no Twitch OAuth, Client ID, Client Secret or account login is required.",
   "author": "eliasbruno124",
   "help_url": "https://github.com/eliasbruno124-dev/Dispatcharr-Twitch-EPG",
@@ -90,15 +90,15 @@
       "label": "Show offline channels",
       "type": "boolean",
       "default": true,
-      "description": "ON keeps offline streamers in Dispatcharr. OFF removes offline streamers during sync and re-creates them when they go live."
+      "description": "ON keeps offline streamers in Dispatcharr while at least one real Twitch channel is live. If nobody is live and the no-streams placeholder is enabled, the placeholder replaces offline streamer rows. OFF removes offline streamers during sync and re-creates them when they go live."
     },
     {
       "id": "offline_icon_url",
       "label": "Offline channel icon",
       "type": "text",
-      "default": "https://raw.githubusercontent.com/eliasbruno124-dev/Dispatcharr-Twitch-EPG/main/twitcharr/assets/offline.svg",
-      "placeholder": "https://raw.githubusercontent.com/eliasbruno124-dev/Dispatcharr-Twitch-EPG/main/twitcharr/assets/offline.svg",
-      "description": "Image used for offline channels and the no-streams placeholder. Leave empty for the built-in Twitcharr offline card; enter 'none' to disable the icon."
+      "default": "",
+      "placeholder": "Leave empty for the default offline card",
+      "description": "Image shown on offline channels and the no-streams placeholder. Leave empty (default) for a normal HTTPS offline card that TV clients can load. Paste any http(s) or short data: URL to use your own. Enter 'none' to disable the icon entirely."
     },
     {
       "id": "keep_placeholder",
@@ -111,8 +111,8 @@
       "id": "use_live_thumbnails",
       "label": "Use live preview thumbnails as channel icon",
       "type": "boolean",
-      "default": true,
-      "description": "ON uses Twitch's live preview image as the channel icon. OFF uses game art or the profile picture."
+      "default": false,
+      "description": "OFF by default. ON uses Twitch's live preview image as the channel icon. OFF uses game art or the profile picture."
     },
     {
       "id": "use_profile_pic_when_just_chatting",
@@ -217,7 +217,7 @@
     {
       "id": "sync_channels",
       "label": "Sync channels only",
-      "description": "Creates, updates or removes managed Channel and Stream rows without rewriting the guide.",
+      "description": "Writes the current guide rows first, then creates, updates or removes managed Channel and Stream rows.",
       "button_label": "Sync channels",
       "button_variant": "outline",
       "button_color": "blue"
@@ -310,8 +310,8 @@
     {
       "id": "donate",
       "label": "Donate / Support",
-      "description": "Returns the PayPal support link for this plugin's author.",
-      "button_label": "Donate via PayPal",
+      "description": "Requests the PayPal donation page for this plugin's author.",
+      "button_label": "Open PayPal",
       "button_variant": "outline",
       "button_color": "pink"
     },

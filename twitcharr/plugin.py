@@ -31,9 +31,34 @@ PLUGIN_KEY = "twitcharr"
 GITHUB_REPO = "eliasbruno124-dev/Dispatcharr-Twitch-EPG"
 GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}"
 DONATE_URL = "https://paypal.me/eliasbruno124"
-DEFAULT_OFFLINE_ICON_URL = (
+DEFAULT_OFFLINE_ICON_URL = "https://dummyimage.com/640x360/100f17/ffffff.png&text=Twitcharr+Offline"
+
+# Compact fallback for old saved data URLs. Dispatcharr currently stores
+# EPGData.icon_url in a 500-character URLField, so the full bundled SVG cannot
+# be embedded there safely.
+_COMPACT_OFFLINE_ICON_DATA_URL = (
+    "data:image/svg+xml,"
+    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 360'%3E"
+    "%3Crect width='640' height='360' fill='%23100f17'/%3E"
+    "%3Crect x='50' y='65' width='540' height='230' rx='24' fill='%231a1726' stroke='%239146ff' stroke-width='6'/%3E"
+    "%3Ctext x='320' y='205' fill='white' font-size='64' text-anchor='middle'%3EOFFLINE%3C/text%3E"
+    "%3C/svg%3E"
+)
+MAX_DISPATCHARR_ICON_URL_LENGTH = 500
+
+# Legacy default that pointed at a GitHub raw URL. The repo isn't public,
+# so the URL returns 404 and offline tiles render blank. We treat this exact
+# string as "use the bundled offline card" so already-saved settings recover.
+_LEGACY_OFFLINE_ICON_URL = (
     f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/twitcharr/assets/offline.svg"
 )
+
+
+def _builtin_offline_icon_data_url() -> str:
+    """Return the compact offline card as a Dispatcharr-safe data URL."""
+    return _COMPACT_OFFLINE_ICON_DATA_URL
+
+
 DEFAULT_TTVLOL_PROXY_SERVERS = (
     "https://eu.luminous.dev,"
     "https://eu2.luminous.dev,"
@@ -60,7 +85,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "keep_placeholder": True,
     "auto_check_updates": True,
     "auto_apply_updates": True,
-    "use_live_thumbnails": True,
+    "use_live_thumbnails": False,
     "fast_startup": True,
     "discord_webhook_url": "",
 }
@@ -158,6 +183,19 @@ def _offline_icon_url(settings: dict) -> str:
         fallback_on_empty=True,
     )
     if raw.lower() in {"none", "off", "disable", "disabled", "-"}:
+        return ""
+    # Heal saved configs that still hold the legacy GitHub-raw default which
+    # 404s for users who don't have access to the eliasbruno124-dev repo.
+    if raw == _LEGACY_OFFLINE_ICON_URL:
+        return DEFAULT_OFFLINE_ICON_URL
+    # Older dev builds embedded the full offline.svg as base64. Long values
+    # work as browser URLs, but they are too long for Dispatcharr's
+    # EPGData.icon_url DB column. Heal data URLs to the compact built-in card;
+    # drop overlong custom URLs so the refresh does not fail.
+    if len(raw) > MAX_DISPATCHARR_ICON_URL_LENGTH:
+        if raw.lower().startswith("data:"):
+            return _builtin_offline_icon_data_url()
+        logger.warning("Offline channel icon URL is too long for Dispatcharr and was ignored")
         return ""
     return raw
 
@@ -267,8 +305,8 @@ def _gather_entries(settings: dict, *, client=None):
     logins = _resolve_logins(settings, client)
     if not logins:
         return client, [], []
-    # Cache-bust the live preview URL once per minute so Dispatcharr / Emby
-    # actually re-fetches the thumbnail instead of serving stale CDN cache.
+    # Cache-bust the optional live preview URL once per minute so Dispatcharr /
+    # Emby actually re-fetches it instead of serving stale CDN cache.
     cache_bust = int(time.time() // 60)
     entries = epg.build_entries(
         client,
@@ -276,7 +314,7 @@ def _gather_entries(settings: dict, *, client=None):
         use_profile_pic_when_just_chatting=_bool_setting(settings, "use_profile_pic_when_just_chatting", True),
         include_offline=_bool_setting(settings, "include_offline", True),
         offline_icon_url=_offline_icon_url(settings),
-        use_live_thumbnails=_bool_setting(settings, "use_live_thumbnails", True),
+        use_live_thumbnails=_bool_setting(settings, "use_live_thumbnails", False),
         cache_bust=cache_bust,
     )
     return client, logins, entries
@@ -289,12 +327,29 @@ def _write_epg(settings: dict, entries: list[dict]) -> dict:
     channels, programmes = epg.write_xmltv(entries, epg.xmltv_path(data_dir))
     db_result = epg.upsert_db(entries, data_dir)
     return {
+        "status": "ok",
         "message": f"Wrote guide for {channels} channels and {programmes} programmes.",
         "channels": channels,
         "programmes": programmes,
         "xmltv_path": epg.xmltv_path(data_dir),
         **db_result,
     }
+
+
+def _lineup_epg_entries(settings: dict, entries: list[dict]) -> list[dict]:
+    """Return the exact guide rows that should exist for the current lineup."""
+    has_live = any(e.get("live") for e in entries)
+    if not has_live and _bool_setting(settings, "keep_placeholder", True):
+        from . import streamlink_setup
+
+        return [streamlink_setup._placeholder_entry(
+            offline_icon_url=_offline_icon_url(settings),
+        )]
+    return list(entries)
+
+
+def _write_lineup_guide(settings: dict, entries: list[dict]) -> dict:
+    return _write_epg(settings, _lineup_epg_entries(settings, entries))
 
 
 def _sync_channels_from_entries(settings: dict, entries: list[dict]) -> dict:
@@ -362,19 +417,7 @@ def _run_refresh_epg(settings: dict, *, prebuilt=None) -> dict:
     if not entries and not getattr(client, "_users", {}):
         return {"status": "error", "message": "No matching Twitch channels found for the configured input"}
 
-    # Make sure offline placeholders show up in the guide too — write_xmltv
-    # mirrors whatever we feed it, but the placeholder channel is created in
-    # streamlink_setup, so for guide consistency we always include it here too
-    # if there are no live entries.
-    epg_entries = list(entries)
-    if not any(e.get("live") for e in epg_entries) and _bool_setting(settings, "keep_placeholder", True):
-        from . import streamlink_setup
-
-        epg_entries.append(streamlink_setup._placeholder_entry(
-            offline_icon_url=_offline_icon_url(settings),
-        ))
-
-    write_result = _write_epg(settings, epg_entries)
+    write_result = _write_lineup_guide(settings, entries)
 
     # Opportunistic ttv.lol freshness check (cheap when not due).
     data_dir = _data_dir(settings)
@@ -415,12 +458,18 @@ def _run_sync_channels(settings: dict, *, prebuilt=None) -> dict:
         return {"status": "error", "message": "No Twitch channel names configured"}
     if not entries and not getattr(client, "_users", {}):
         return {"status": "error", "message": "No matching Twitch channels found for the configured input"}
+    guide_result = _write_lineup_guide(settings, entries)
     result = _sync_channels_from_entries(settings, entries)
     if not entries:
         result["message"] = (
             "No configured Twitch channels are live right now. Managed offline channels were pruned."
         )
-    return {"status": "ok", "channels_synced": len(result.get("channel_names") or []), **result}
+    return {
+        "status": "ok",
+        "channels_synced": len(result.get("channel_names") or []),
+        "guide": guide_result,
+        **result,
+    }
 
 
 def _run_setup(settings: dict) -> dict:
@@ -469,7 +518,9 @@ def _run_setup(settings: dict) -> dict:
             )
             return result
         result["sync"] = _run_sync_channels(settings, prebuilt=prebuilt)
-        result["epg"] = _run_refresh_epg(settings, prebuilt=prebuilt)
+        result["epg"] = result["sync"].get("guide", {})
+        result["media_server_refresh"] = _trigger_media_server(settings)
+        result["discord_notifications"] = _trigger_discord_go_live(settings, entries)
         result["message"] = "Setup complete: channels, guide, scheduler and integrations were refreshed."
         result["next"] = "Done. Channels, guide and the auto-updater are active."
     else:
@@ -499,16 +550,20 @@ def _run_all(settings: dict) -> dict:
 
     if prebuilt is not None:
         try:
-            out["steps"]["sync_channels"] = _run_sync_channels(settings, prebuilt=prebuilt)
+            sync_result = _run_sync_channels(settings, prebuilt=prebuilt)
+            out["steps"]["sync_channels"] = sync_result
+            out["steps"]["refresh_epg"] = sync_result.get("guide", {})
         except Exception as e:
             logger.exception("sync_channels failed")
             out["steps"]["sync_channels"] = {"status": "error", "message": str(e)}
 
         try:
-            out["steps"]["refresh_epg"] = _run_refresh_epg(settings, prebuilt=prebuilt)
+            out["steps"]["media_server"] = _trigger_media_server(settings)
+            _client, _logins, entries = prebuilt
+            out["steps"]["discord"] = _trigger_discord_go_live(settings, entries)
         except Exception as e:
-            logger.exception("refresh_epg failed")
-            out["steps"]["refresh_epg"] = {"status": "error", "message": str(e)}
+            logger.exception("post-sync integrations failed")
+            out["steps"]["integrations"] = {"status": "error", "message": str(e)}
 
     has_error = any(s.get("status") == "error" for s in out["steps"].values())
     out["status"] = "partial" if has_error else "ok"
@@ -639,9 +694,12 @@ def _validate_settings(settings: dict) -> dict:
         if not url.lower().startswith(("http://", "https://")):
             warnings.append(f"Proxy URL '{url}' should start with http:// or https://.")
 
+    offline_icon_raw = _text_setting(settings, "offline_icon_url")
     offline_icon = _offline_icon_url(settings)
     if offline_icon and not offline_icon.lower().startswith(("http://", "https://", "data:")):
         warnings.append("Offline channel icon should be an http(s) URL or a data: URL.")
+    if offline_icon_raw and len(offline_icon_raw) > MAX_DISPATCHARR_ICON_URL_LENGTH:
+        warnings.append("Offline channel icon is too long for Dispatcharr's EPG icon field.")
 
     media_url = _text_setting(settings, "media_server_url")
     media_key = _text_setting(settings, "media_server_api_key")
@@ -912,11 +970,17 @@ def _run_apply_update(settings: dict) -> dict:
 
 
 def _run_donate(_settings: dict) -> dict:
+    # Dispatcharr's current plugin UI only shows action messages. Return every
+    # common URL field too, so newer clients can open PayPal directly.
+    message = "PayPal donation page requested."
     return {
         "status": "ok",
-        "message": (
-            "Thanks for using Twitcharr. Support development via PayPal:"
-        ),
+        "message": message,
+        "url": DONATE_URL,
+        "link": DONATE_URL,
+        "open_url": DONATE_URL,
+        "redirect": DONATE_URL,
+        "redirect_url": DONATE_URL,
         "donate_url": DONATE_URL,
         "paypal_url": DONATE_URL,
         "github_url": GITHUB_REPO_URL,
@@ -1092,13 +1156,17 @@ def _run_scheduled_tick() -> None:
                 else:
                     prebuilt = _gather_entries(settings)
                     sync_result = _run_sync_channels(settings, prebuilt=prebuilt)
-                    epg_result = _run_refresh_epg(settings, prebuilt=prebuilt)
+                    _client, _logins, entries = prebuilt
+                    media_result = _trigger_media_server(settings)
+                    discord_result = _trigger_discord_go_live(settings, entries)
                     state = _load_schedule_state(settings)
                     state.update({
                         "last_epg_refresh": int(time.time()),
                         "last_epg_status": "ok",
                         "last_sync_result": sync_result,
-                        "last_epg_result": epg_result,
+                        "last_epg_result": sync_result.get("guide", {}),
+                        "last_media_server_refresh": media_result,
+                        "last_discord_result": discord_result,
                     })
                     _save_schedule_state(settings, state)
             except Exception as e:
@@ -1221,7 +1289,7 @@ def _disable_schedule() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = str(_MANIFEST.get("version") or "1.2.1")
+    version = str(_MANIFEST.get("version") or "1.2.3")
     description = (
         "Twitch live-TV lineup for Dispatcharr. Add channel names by comma or line break, "
         "optionally use discovery tokens, and sync Channels plus XMLTV guide data "

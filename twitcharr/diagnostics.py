@@ -227,9 +227,11 @@ def health_check(
         from apps.channels.models import Channel, Stream
         from apps.epg.models import EPGData, EPGSource
 
-        from .epg import EPG_SOURCE_NAME, TVG_ID_PREFIX
+        from .epg import EPG_SOURCE_NAME
 
-        out["channels_managed"] = Channel.objects.filter(tvg_id__startswith=TVG_ID_PREFIX).count()
+        out["channels_managed"] = Channel.objects.filter(
+            streams__custom_properties__owner="twitcharr"
+        ).distinct().count()
         out["streams_managed"] = Stream.objects.filter(
             custom_properties__owner="twitcharr"
         ).count()

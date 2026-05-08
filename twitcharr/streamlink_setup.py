@@ -201,6 +201,7 @@ def _placeholder_entry(*, offline_icon_url: str = "") -> dict:
     return {
         "login": PLACEHOLDER_LOGIN,
         "display_name": PLACEHOLDER_NAME,
+        "channel_name": PLACEHOLDER_NAME,
         "profile_image_url": "",
         "icon_url": offline_icon_url or "",
         "description": "Currently no streams online. Channels will appear automatically when streamers go live.",
@@ -259,16 +260,22 @@ def sync_channels(
 
     # Decide whether to inject the placeholder. We add it whenever:
     #   * the user wants it AND
-    #   * there are no live channels right now (real-life lineup might be empty)
-    real_entries = list(entries)
-    has_live = any(e.get("live") for e in real_entries)
+    #   * there are no live channels right now (real-life lineup might be empty).
+    #
+    # When the placeholder is active we also drop the offline entries so the
+    # lineup shows ONLY the "no streams online" tile — otherwise users see
+    # both the placeholder and one greyed-out tile per offline streamer.
+    has_live = any(e.get("live") for e in entries)
     if keep_placeholder and not has_live:
-        real_entries.append(_placeholder_entry(offline_icon_url=offline_icon_url))
+        real_entries = [_placeholder_entry(offline_icon_url=offline_icon_url)]
+    else:
+        real_entries = list(entries)
 
     for idx, e in enumerate(real_entries):
         login = e["login"]
         tvg = channel_tvg_id(login)
         synced_tvg_ids.add(tvg)
+        channel_name = e.get("channel_name") or e["display_name"]
 
         is_placeholder = login == PLACEHOLDER_LOGIN
         twitch_url = (
@@ -276,10 +283,10 @@ def sync_channels(
             if is_placeholder
             else f"https://twitch.tv/{login}"
         )
-        logo = _logo_for(login, e["display_name"], e["icon_url"])
+        logo = _logo_for(login, channel_name, e["icon_url"])
 
         stream_defaults = {
-            "name": e["display_name"],
+            "name": channel_name,
             "url": twitch_url,
             "logo_url": e["icon_url"] or None,
             "tvg_id": tvg,
@@ -289,6 +296,8 @@ def sync_channels(
             "custom_properties": {
                 "owner": OWNER_TAG,
                 "twitch_login": login,
+                "twitch_live": bool(e.get("live")),
+                "twitch_viewers": int(e.get("viewer_count") or 0),
                 "is_placeholder": is_placeholder,
             },
         }
@@ -302,7 +311,7 @@ def sync_channels(
             created_streams += 1
 
         ch_defaults = {
-            "name": e["display_name"],
+            "name": channel_name,
             "channel_group": group,
             "tvg_id": tvg,
             "stream_profile": profile,
@@ -366,8 +375,10 @@ def _prune_unmanaged(keep_tvg_ids: set[str]) -> tuple[int, int]:
     """Delete managed Channels and Streams whose tvg_id isn't in `keep_tvg_ids`."""
     from apps.channels.models import Channel, Stream
 
-    stale_channels = Channel.objects.filter(tvg_id__startswith="twitch.").exclude(
-        tvg_id__in=keep_tvg_ids
+    stale_channels = (
+        Channel.objects.filter(streams__custom_properties__owner=OWNER_TAG)
+        .exclude(tvg_id__in=keep_tvg_ids)
+        .distinct()
     )
     stale_tvg_ids = list(stale_channels.values_list("tvg_id", flat=True))
     channel_count = stale_channels.count()
@@ -398,7 +409,9 @@ def uninstall_managed_objects() -> dict:
     streams = Stream.objects.filter(custom_properties__owner=OWNER_TAG)
     stream_count = streams.count()
 
-    channels = Channel.objects.filter(tvg_id__startswith="twitch.")
+    channels = Channel.objects.filter(
+        streams__custom_properties__owner=OWNER_TAG
+    ).distinct()
     channel_count = channels.count()
     channels.delete()
     streams.delete()
