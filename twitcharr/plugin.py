@@ -31,32 +31,23 @@ PLUGIN_KEY = "twitcharr"
 GITHUB_REPO = "eliasbruno124-dev/Dispatcharr-Twitch-EPG"
 GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}"
 DONATE_URL = "https://paypal.me/eliasbruno124"
-DEFAULT_OFFLINE_ICON_URL = "https://dummyimage.com/640x360/100f17/ffffff.png&text=Twitcharr+Offline"
 
-# Compact fallback for old saved data URLs. Dispatcharr currently stores
-# EPGData.icon_url in a 500-character URLField, so the full bundled SVG cannot
-# be embedded there safely.
-_COMPACT_OFFLINE_ICON_DATA_URL = (
+# Bundled offline tile. Full-bleed deep-violet background with a pixel-style
+# game controller (D-pad + 4 face buttons) on a Twitch-purple body and a bold
+# OFFLINE wordmark — the twitch2tuner-flavored "no stream" placeholder. Kept
+# under the 500-char limit Dispatcharr enforces on EPG icon URLs.
+_BUILTIN_OFFLINE_ICON_DATA_URL = (
     "data:image/svg+xml,"
     "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 360'%3E"
-    "%3Crect width='640' height='360' fill='%23100f17'/%3E"
-    "%3Crect x='50' y='65' width='540' height='230' rx='24' fill='%231a1726' stroke='%239146ff' stroke-width='6'/%3E"
-    "%3Ctext x='320' y='205' fill='white' font-size='64' text-anchor='middle'%3EOFFLINE%3C/text%3E"
-    "%3C/svg%3E"
+    "%3Crect width='640' height='360' fill='%231a0d33'/%3E"
+    "%3Crect x='195' y='125' width='250' height='90' rx='22' fill='%239146ff'/%3E"
+    "%3Cg fill='%23fff'%3E"
+    "%3Cpath d='M230 165h30v10h-30M240 155h10v30h-10'/%3E"
+    "%3Cpath d='M388 162h12v12h-12M408 162h12v12h-12M388 180h12v12h-12M408 180h12v12h-12'/%3E"
+    "%3Ctext x='320' y='285' font-size='46' font-weight='900' text-anchor='middle'%3EOFFLINE%3C/text%3E"
+    "%3C/g%3E%3C/svg%3E"
 )
-MAX_DISPATCHARR_ICON_URL_LENGTH = 500
-
-# Legacy default that pointed at a GitHub raw URL. The repo isn't public,
-# so the URL returns 404 and offline tiles render blank. We treat this exact
-# string as "use the bundled offline card" so already-saved settings recover.
-_LEGACY_OFFLINE_ICON_URL = (
-    f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/twitcharr/assets/offline.svg"
-)
-
-
-def _builtin_offline_icon_data_url() -> str:
-    """Return the compact offline card as a Dispatcharr-safe data URL."""
-    return _COMPACT_OFFLINE_ICON_DATA_URL
+DEFAULT_OFFLINE_ICON_URL = _BUILTIN_OFFLINE_ICON_DATA_URL
 
 
 DEFAULT_TTVLOL_PROXY_SERVERS = (
@@ -70,11 +61,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "starting_channel_number": 9000,
     "data_dir": "/app/data/plugins/twitcharr",
     "include_offline": True,
-    "offline_icon_url": DEFAULT_OFFLINE_ICON_URL,
     "use_profile_pic_when_just_chatting": True,
     "epg_refresh_interval_minutes": 2,
     "ttvlol_update_time": "04:30",
-    "schedule_enabled": True,
     "ttvlol_proxy_servers": DEFAULT_TTVLOL_PROXY_SERVERS,
     "stream_quality": "adaptive",
     "connection_bandwidth_mbps": 0,
@@ -175,29 +164,14 @@ def _proxy_servers(settings: dict) -> str:
     return _text_setting(settings, "ttvlol_proxy_servers", DEFAULT_TTVLOL_PROXY_SERVERS)
 
 
-def _offline_icon_url(settings: dict) -> str:
-    raw = _text_setting(
-        settings,
-        "offline_icon_url",
-        DEFAULT_OFFLINE_ICON_URL,
-        fallback_on_empty=True,
-    )
-    if raw.lower() in {"none", "off", "disable", "disabled", "-"}:
-        return ""
-    # Heal saved configs that still hold the legacy GitHub-raw default which
-    # 404s for users who don't have access to the eliasbruno124-dev repo.
-    if raw == _LEGACY_OFFLINE_ICON_URL:
-        return DEFAULT_OFFLINE_ICON_URL
-    # Older dev builds embedded the full offline.svg as base64. Long values
-    # work as browser URLs, but they are too long for Dispatcharr's
-    # EPGData.icon_url DB column. Heal data URLs to the compact built-in card;
-    # drop overlong custom URLs so the refresh does not fail.
-    if len(raw) > MAX_DISPATCHARR_ICON_URL_LENGTH:
-        if raw.lower().startswith("data:"):
-            return _builtin_offline_icon_data_url()
-        logger.warning("Offline channel icon URL is too long for Dispatcharr and was ignored")
-        return ""
-    return raw
+def _offline_icon_url(_settings: dict) -> str:
+    """Always return the bundled offline tile.
+
+    The user-facing setting that used to override this was removed in v1.2.4
+    so every install ships the same, designed offline card. The argument is
+    kept to preserve the existing call signatures across the codebase.
+    """
+    return DEFAULT_OFFLINE_ICON_URL
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +377,71 @@ def _run_update_ttvlol(settings: dict, *, force: bool = False) -> dict:
     }
 
 
+def _run_check_ttvlol(settings: dict) -> dict:
+    """Quick freshness check for streamlink-ttvlol.
+
+    Mirrors the plugin self-updater's check action: hits GitHub for the
+    latest release tag, compares it to the locally cached one, and reports
+    whether the user should force a re-download. Never writes files itself.
+    """
+    from . import ttvlol
+
+    data_dir = _data_dir(settings)
+    info = ttvlol.info(data_dir)
+    installed = bool(info.get("installed"))
+    current_tag = (info.get("release_tag") or "").strip()
+
+    latest_tag = ""
+    fetch_error = ""
+    try:
+        import requests
+
+        resp = requests.get(
+            ttvlol.RELEASES_API,
+            timeout=10,
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "Twitcharr"},
+        )
+        if resp.status_code == 200:
+            latest_tag = (resp.json().get("tag_name") or "").strip()
+        else:
+            fetch_error = f"GitHub returned HTTP {resp.status_code}"
+    except Exception as exc:
+        fetch_error = str(exc)
+
+    if not installed:
+        message = "streamlink-ttvlol is not installed yet — press 'Force-update ttv.lol' to download it."
+        update_available = True
+    elif fetch_error:
+        message = f"Could not reach GitHub to check ttv.lol ({fetch_error}). Local version: {current_tag or 'unknown'}."
+        update_available = False
+    elif not latest_tag:
+        message = f"GitHub did not return a release tag. Local version: {current_tag or 'unknown'}."
+        update_available = False
+    elif current_tag and current_tag == latest_tag:
+        message = f"streamlink-ttvlol is up to date (tag {current_tag})."
+        update_available = False
+    else:
+        message = (
+            f"A newer streamlink-ttvlol release is available "
+            f"(local: {current_tag or 'unknown'} → latest: {latest_tag}). "
+            f"Press 'Force-update ttv.lol' to apply it."
+        )
+        update_available = True
+
+    return {
+        "status": "ok",
+        "message": message,
+        "installed": installed,
+        "current_release_tag": current_tag,
+        "latest_release_tag": latest_tag,
+        "update_available": update_available,
+        "last_check": info.get("last_check"),
+        "last_update": info.get("last_update"),
+        "path": info.get("path"),
+        "fetch_error": fetch_error,
+    }
+
+
 def _run_refresh_epg(settings: dict, *, prebuilt=None) -> dict:
     """Refresh EPG, then trigger the configured Emby/Jellyfin server."""
     from . import ttvlol
@@ -505,7 +544,7 @@ def _run_setup(settings: dict) -> dict:
         "ttvlol_path": ttv_result.target_path,
         "stream_profile_id": profile.id,
         "epg_source_id": source.id,
-        "schedule": _enable_schedule(settings),
+        "schedule": _ensure_schedule_running(),
     }
 
     if _settings_have_twitch_inputs(settings):
@@ -694,13 +733,6 @@ def _validate_settings(settings: dict) -> dict:
         if not url.lower().startswith(("http://", "https://")):
             warnings.append(f"Proxy URL '{url}' should start with http:// or https://.")
 
-    offline_icon_raw = _text_setting(settings, "offline_icon_url")
-    offline_icon = _offline_icon_url(settings)
-    if offline_icon and not offline_icon.lower().startswith(("http://", "https://", "data:")):
-        warnings.append("Offline channel icon should be an http(s) URL or a data: URL.")
-    if offline_icon_raw and len(offline_icon_raw) > MAX_DISPATCHARR_ICON_URL_LENGTH:
-        warnings.append("Offline channel icon is too long for Dispatcharr's EPG icon field.")
-
     media_url = _text_setting(settings, "media_server_url")
     media_key = _text_setting(settings, "media_server_api_key")
     if bool(media_url) != bool(media_key):
@@ -722,55 +754,6 @@ def _validate_settings(settings: dict) -> dict:
     }
 
 
-def _run_test_connection(settings: dict) -> dict:
-    from . import diagnostics
-
-    validation = _validate_settings(settings)
-    twitch = diagnostics.check_twitch_api()
-    media = diagnostics.check_media_server(
-        base_url=_text_setting(settings, "media_server_url"),
-        api_key=_text_setting(settings, "media_server_api_key"),
-    )
-    streamlink = diagnostics.check_streamlink()
-
-    failures: list[str] = []
-    if validation["status"] == "error":
-        failures.append("settings")
-    if twitch.get("status") != "ok":
-        failures.append("twitch_api")
-    if media.get("status") == "error":
-        failures.append("media_server")
-    if streamlink.get("status") not in {"ok", "missing"}:
-        failures.append("streamlink")
-
-    status = "error" if failures else ("degraded" if streamlink.get("status") == "missing" else "ok")
-    message = (
-        "Connection OK: Twitch metadata works anonymously; no Twitch account login, OAuth or API key is needed."
-        if status == "ok"
-        else "Connection check finished with issues. See the returned status fields."
-    )
-    return {
-        "status": status,
-        "message": message,
-        "summary": (
-            "Anonymous Twitch metadata connection works; no Twitch OAuth, Client ID, Client Secret or account login is required."
-            if twitch.get("status") == "ok"
-            else "Twitch metadata connection failed."
-        ),
-        "oauth_required": False,
-        "twitch_credentials_required": False,
-        "settings_status": validation.get("status"),
-        "twitch_status": twitch.get("status"),
-        "media_server_status": media.get("status"),
-        "streamlink_status": streamlink.get("status"),
-        "settings_validation": validation,
-        "twitch_api": twitch,
-        "media_server": media,
-        "streamlink": streamlink,
-        "failures": failures,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Diagnostics
 # ---------------------------------------------------------------------------
@@ -778,32 +761,6 @@ def _run_test_connection(settings: dict) -> dict:
 
 def _scheduler_is_running() -> bool:
     return bool(_scheduler_thread and _scheduler_thread.is_alive())
-
-
-def _run_status(settings: dict) -> dict:
-    """Top-to-bottom system check — Twitch API, streamlink, ttv.lol, proxies,
-    Emby/Jellyfin, scheduler health, last refresh timestamps, channel counts."""
-    from . import diagnostics
-
-    out = diagnostics.health_check(
-        settings=settings,
-        data_dir=_data_dir(settings),
-        plugin_version=Plugin.version,
-        scheduler_running=_scheduler_is_running(),
-    )
-    validation = _validate_settings(settings)
-    out["settings_validation"] = validation
-    if validation["status"] == "error":
-        out["status"] = "degraded"
-        reasons = list(out.get("degraded_reasons") or [])
-        reasons.append("settings")
-        out["degraded_reasons"] = reasons
-    out["message"] = (
-        "System status OK."
-        if out.get("status") == "ok"
-        else f"System status {out.get('status')}: {', '.join(out.get('degraded_reasons') or [])}"
-    )
-    return out
 
 
 def _run_test_proxies(settings: dict) -> dict:
@@ -965,29 +922,6 @@ def _run_apply_update(settings: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Donate
-# ---------------------------------------------------------------------------
-
-
-def _run_donate(_settings: dict) -> dict:
-    # Dispatcharr's current plugin UI only shows action messages. Return every
-    # common URL field too, so newer clients can open PayPal directly.
-    message = "PayPal donation page requested."
-    return {
-        "status": "ok",
-        "message": message,
-        "url": DONATE_URL,
-        "link": DONATE_URL,
-        "open_url": DONATE_URL,
-        "redirect": DONATE_URL,
-        "redirect_url": DONATE_URL,
-        "donate_url": DONATE_URL,
-        "paypal_url": DONATE_URL,
-        "github_url": GITHUB_REPO_URL,
-    }
-
-
-# ---------------------------------------------------------------------------
 # Scheduling
 # ---------------------------------------------------------------------------
 
@@ -1110,8 +1044,6 @@ def _settings_have_twitch_inputs(settings: dict) -> bool:
 
 def _run_scheduled_tick() -> None:
     settings = _load_settings()
-    if not _bool_setting(settings, "schedule_enabled", True):
-        return
 
     now = time.time()
     state = _load_schedule_state(settings)
@@ -1260,27 +1192,18 @@ def _delete_legacy_celery_tasks() -> dict:
         return {"legacy_epg_task_removed": False, "legacy_ttvlol_task_removed": False}
 
 
-def _enable_schedule(settings: dict) -> dict:
-    _save_setting("schedule_enabled", True)
+def _ensure_schedule_running() -> dict:
+    """Make sure the background scheduler is running and report its status."""
     merged = _load_settings()
     started = _start_scheduler()
     return {
         "status": "ok",
-        "scheduler": "enabled",
+        "scheduler": "running",
         "started_now": started,
         "epg_refresh": f"every {_interval_minutes(merged)} minutes",
         "ttvlol_update": f"daily at {_ttvlol_update_time_label(merged)} server time",
         **_delete_legacy_celery_tasks(),
     }
-
-
-def _disable_schedule() -> dict:
-    try:
-        _save_setting("schedule_enabled", False)
-    except Exception:
-        logger.exception("Could not persist disabled scheduler setting")
-    stopped = _stop_scheduler()
-    return {"status": "ok", "scheduler": "disabled", "stopped_now": stopped, **_delete_legacy_celery_tasks()}
 
 
 # ---------------------------------------------------------------------------
@@ -1303,8 +1226,7 @@ class Plugin:
 
     def __init__(self):
         try:
-            if _bool_setting(_load_settings(), "schedule_enabled", True):
-                _start_scheduler()
+            _start_scheduler()
         except Exception:
             logger.exception("Could not start persisted Twitcharr scheduler")
 
@@ -1320,6 +1242,8 @@ class Plugin:
                 return _run_sync_channels(settings)
             if action == "refresh_epg":
                 return _run_refresh_epg(settings)
+            if action == "check_ttvlol":
+                return _run_check_ttvlol(settings)
             if action == "update_ttvlol":
                 return _run_update_ttvlol(settings, force=bool(params.get("force", True)))
             if action == "run_all":
@@ -1328,10 +1252,6 @@ class Plugin:
                 return _run_refresh_media_server(settings)
             if action == "measure_bandwidth":
                 return _run_measure_bandwidth(settings)
-            if action in {"test_connection", "test_media_server_connection"}:
-                return _run_test_connection(settings)
-            if action == "status":
-                return _run_status(settings)
             if action == "test_proxies":
                 return _run_test_proxies(settings)
             if action == "test_discord":
@@ -1340,16 +1260,10 @@ class Plugin:
                 return _run_check_updates(settings)
             if action == "apply_update":
                 return _run_apply_update(settings)
-            if action == "donate":
-                return _run_donate(settings)
-            if action == "enable_schedule":
-                return _enable_schedule(settings)
-            if action == "disable_schedule":
-                return _disable_schedule()
             if action == "uninstall":
                 from . import streamlink_setup
 
-                _disable_schedule()
+                _stop_scheduler()
                 return {"status": "ok", **streamlink_setup.uninstall_managed_objects()}
             return {"status": "error", "message": f"Unknown action: {action}"}
         except Exception as e:
@@ -1359,10 +1273,5 @@ class Plugin:
     def stop(self, context: dict):
         try:
             _stop_scheduler()
-            if (context or {}).get("reason") in {"disable", "delete"}:
-                try:
-                    _save_setting("schedule_enabled", False)
-                except Exception:
-                    logger.exception("Could not persist disabled scheduler setting")
         except Exception:
             logger.exception("Failed to stop Twitcharr scheduler")

@@ -270,6 +270,43 @@ def sync_channels(
         real_entries = [_placeholder_entry(offline_icon_url=offline_icon_url)]
     else:
         real_entries = list(entries)
+        # Defensive cleanup: when at least one real stream is live, eagerly
+        # tear down any leftover placeholder Channel / Stream / EPGData /
+        # ProgramData rows BEFORE we create real ones. Otherwise a stale
+        # placeholder from a previous "nobody live" cycle could survive long
+        # enough for the UI to render a freshly-added live channel under the
+        # "⚫ No stream online" programme.
+        if has_live:
+            try:
+                Channel.objects.filter(tvg_id=PLACEHOLDER_TVG_ID).delete()
+                Stream.objects.filter(
+                    custom_properties__owner=OWNER_TAG,
+                    custom_properties__is_placeholder=True,
+                ).delete()
+                from apps.epg.models import EPGData, ProgramData
+
+                placeholder_epg = EPGData.objects.filter(tvg_id=PLACEHOLDER_TVG_ID)
+                ProgramData.objects.filter(epg__in=placeholder_epg).delete()
+                placeholder_epg.delete()
+            except Exception:
+                logger.exception("Defensive placeholder cleanup failed (non-fatal)")
+
+    # Prefetch every EPGData row for the upcoming tvg_ids in one query so we
+    # can attach `epg_data` at Channel creation time. Without this, channels
+    # are created with a NULL epg_data_id and then patched a few lines later,
+    # which leaves a brief window where the UI shows the channel without its
+    # guide data.
+    epg_by_tvg: dict[str, "object"] = {}
+    try:
+        from apps.epg.models import EPGData
+
+        all_tvg_ids = [channel_tvg_id(e["login"]) for e in real_entries]
+        epg_by_tvg = {
+            row.tvg_id: row
+            for row in EPGData.objects.filter(tvg_id__in=all_tvg_ids)
+        }
+    except Exception:
+        logger.exception("Could not prefetch EPGData rows; channels will be linked after creation")
 
     for idx, e in enumerate(real_entries):
         login = e["login"]
@@ -310,6 +347,7 @@ def sync_channels(
             stream = Stream.objects.create(**stream_defaults)
             created_streams += 1
 
+        epg_row = epg_by_tvg.get(tvg)
         ch_defaults = {
             "name": channel_name,
             "channel_group": group,
@@ -317,6 +355,8 @@ def sync_channels(
             "stream_profile": profile,
             "logo": logo,
         }
+        if epg_row is not None:
+            ch_defaults["epg_data"] = epg_row
         channel = Channel.objects.filter(tvg_id=tvg).first()
         if channel:
             for k, v in ch_defaults.items():
@@ -332,19 +372,6 @@ def sync_channels(
         ChannelStream.objects.update_or_create(
             channel=channel, stream=stream, defaults={"order": 0}
         )
-
-        # Link channel to its EPGData row right away (the EPG writer also does
-        # this, but doing it here as well covers the case where sync runs
-        # without an immediate EPG refresh).
-        try:
-            from apps.epg.models import EPGData
-
-            epg = EPGData.objects.filter(tvg_id=tvg).first()
-            if epg and channel.epg_data_id != epg.id:
-                channel.epg_data = epg
-                channel.save(update_fields=["epg_data"])
-        except Exception:
-            logger.exception("Could not link EPGData for %s", login)
 
         synced_logins.append(login)
 

@@ -1,7 +1,7 @@
 {
   "name": "Twitcharr",
-  "version": "1.2.3",
-  "description": "Twitch live-TV lineup for Dispatcharr. Add Twitch channel names by comma or line break, optionally use discovery tokens, then sync Channels, Streams and XMLTV guide rows. Twitch metadata is fetched anonymously; no Twitch OAuth, Client ID, Client Secret or account login is required.",
+  "version": "1.2.6",
+  "description": "Twitch live-TV lineup for Dispatcharr. Add Twitch channel names by comma or line break, optionally use discovery tokens, then sync Channels, Streams and XMLTV guide rows. Twitch metadata is fetched anonymously; no Twitch OAuth, Client ID, Client Secret or account login is required. Support development via PayPal: https://paypal.me/eliasbruno124",
   "author": "eliasbruno124",
   "help_url": "https://github.com/eliasbruno124-dev/Dispatcharr-Twitch-EPG",
   "fields": [
@@ -93,14 +93,6 @@
       "description": "ON keeps offline streamers in Dispatcharr while at least one real Twitch channel is live. If nobody is live and the no-streams placeholder is enabled, the placeholder replaces offline streamer rows. OFF removes offline streamers during sync and re-creates them when they go live."
     },
     {
-      "id": "offline_icon_url",
-      "label": "Offline channel icon",
-      "type": "text",
-      "default": "",
-      "placeholder": "Leave empty for the default offline card",
-      "description": "Image shown on offline channels and the no-streams placeholder. Leave empty (default) for a normal HTTPS offline card that TV clients can load. Paste any http(s) or short data: URL to use your own. Enter 'none' to disable the icon entirely."
-    },
-    {
       "id": "keep_placeholder",
       "label": "Always keep a 'no streams online' channel",
       "type": "boolean",
@@ -145,13 +137,6 @@
       "description": "Comma-separated ttv.lol playlist proxy URLs passed to Streamlink. Clear the field to disable the proxy list."
     },
     {
-      "id": "schedule_enabled",
-      "label": "Enable automatic scheduler",
-      "type": "boolean",
-      "default": true,
-      "description": "ON refreshes Twitch status and guide data on the interval above and checks ttv.lol daily."
-    },
-    {
       "id": "media_server_url",
       "label": "Emby / Jellyfin URL",
       "type": "text",
@@ -161,11 +146,11 @@
     },
     {
       "id": "media_server_api_key",
-      "label": "Emby / Jellyfin access token",
+      "label": "Emby API key",
       "type": "text",
       "default": "",
       "placeholder": "abcdef0123456789...",
-      "description": "Optional media-server token for Emby/Jellyfin only. Not a Twitch key. Required when an Emby/Jellyfin URL is set."
+      "description": "Optional Emby API key (the token also works for Jellyfin). Not a Twitch key. Required when an Emby/Jellyfin URL is set."
     },
     {
       "id": "discord_webhook_url",
@@ -231,22 +216,6 @@
       "button_color": "green"
     },
     {
-      "id": "status",
-      "label": "System status / health-check",
-      "description": "Shows scheduler state, last refresh times, Twitch API status, Streamlink, ttv.lol, proxy latency, media-server status and managed object counts.",
-      "button_label": "Show status",
-      "button_variant": "filled",
-      "button_color": "indigo"
-    },
-    {
-      "id": "test_connection",
-      "label": "Test connection",
-      "description": "Checks settings, anonymous Twitch metadata access, optional Emby/Jellyfin access and Streamlink presence. Confirms that no Twitch OAuth or account login is needed.",
-      "button_label": "Test connection",
-      "button_variant": "outline",
-      "button_color": "indigo"
-    },
-    {
       "id": "test_proxies",
       "label": "Test ttv.lol proxies",
       "description": "Probes every configured ttv.lol proxy URL and reports HTTP code plus latency.",
@@ -279,12 +248,25 @@
       "button_color": "violet"
     },
     {
-      "id": "update_ttvlol",
-      "label": "Force-update ttv.lol",
-      "description": "Downloads the latest streamlink-ttvlol twitch.py regardless of the cached ETag.",
-      "button_label": "Update ttv.lol",
+      "id": "check_ttvlol",
+      "label": "Check ttv.lol version",
+      "description": "Checks GitHub for the latest streamlink-ttvlol release tag and reports whether a force-update is needed. Read-only — does not download anything.",
+      "button_label": "Check ttv.lol",
       "button_variant": "outline",
       "button_color": "orange"
+    },
+    {
+      "id": "update_ttvlol",
+      "label": "Force-update ttv.lol",
+      "description": "Downloads the latest streamlink-ttvlol twitch.py regardless of the cached ETag. Use only after 'Check ttv.lol version' reports an update is available.",
+      "button_label": "Force-update ttv.lol",
+      "button_variant": "filled",
+      "button_color": "orange",
+      "confirm": {
+        "required": true,
+        "title": "Force-update streamlink-ttvlol?",
+        "message": "This redownloads the latest streamlink-ttvlol twitch.py even if the cached ETag matches. Use it when the regular check reports a newer release."
+      }
     },
     {
       "id": "check_updates",
@@ -306,14 +288,6 @@
         "title": "Update the plugin from GitHub?",
         "message": "This downloads the latest Twitcharr release from GitHub and overwrites the plugin's Python code. Your settings, the XMLTV file, and the cached streamlink-ttvlol plugin are preserved."
       }
-    },
-    {
-      "id": "donate",
-      "label": "Donate / Support",
-      "description": "Requests the PayPal donation page for this plugin's author.",
-      "button_label": "Open PayPal",
-      "button_variant": "outline",
-      "button_color": "pink"
     },
     {
       "id": "uninstall",

@@ -159,27 +159,25 @@ def build_entries(
             uptime_str = _format_uptime(s.started_at, datetime.now(timezone.utc))
             viewer_label = _viewer_label(s.viewer_count)
 
-            # User-facing programme title — always leads with the streamer
-            # name and puts viewers in the visible title, because many Live TV
-            # grids hide programme descriptions.
+            # Programme title: the at-a-glance line shown in the channel grid.
+            # Streamer + game + viewer count is enough — the description carries
+            # the stream-specific info so the two are never identical.
             title_parts = [f"🔴 {u.display_name}", game_name or "Live"]
             if viewer_label:
                 title_parts.append(viewer_label)
             title = " • ".join(title_parts)
-            channel_name = f"{u.display_name} ({viewer_label})" if viewer_label else u.display_name
+            channel_name = u.display_name
 
+            # Programme description: the streamer's actual Twitch title plus
+            # uptime and the channel URL. We deliberately do NOT repeat the
+            # game name or viewer count here because those already appear in
+            # the title above — duplicating them made title and description
+            # look identical for streams without a custom title.
             description_parts: list[str] = []
             if stream_title:
                 description_parts.append(stream_title)
-            meta_line: list[str] = []
-            if game_name:
-                meta_line.append(f"Spielt: {game_name}")
             if uptime_str:
-                meta_line.append(f"Live seit {uptime_str}")
-            if viewer_label:
-                meta_line.append(viewer_label)
-            if meta_line:
-                description_parts.append(" • ".join(meta_line))
+                description_parts.append(f"Live seit {uptime_str}")
             description_parts.append(f"https://twitch.tv/{login}")
             description = "\n".join(description_parts)
             started_at = s.started_at
