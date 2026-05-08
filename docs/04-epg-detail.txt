@@ -1,20 +1,10 @@
 FILENAME: 04-epg-detail.png
-USED IN README: after the "Discovery tokens" table
 
-WHAT TO CAPTURE:
-EPG / programme detail view — what shows when a user clicks a channel in
-Emby or Jellyfin Live TV. Demonstrates that the description is rich
-(uptime + viewer count + game).
+Capture a guide detail page for one Twitch channel.
 
-CHECKLIST:
-- Click a live Twitch channel in Emby or Jellyfin Live TV detail
-- Visible in the screenshot:
-    * Programme title: "🔴 <DisplayName> • <Game>"
-    * Description, multi-line:
-        - First line: actual stream title from Twitch
-        - Second line: "Spielt: <Game> • Live seit 2h 34min • 47.382 Zuschauer"
-    * Channel icon = live preview thumbnail
-    * Programme schedule strip (24h block) underneath
-- Pick a streamer that's actually live for the most realistic shot
-
-RESOLUTION: 1600×900 or 1280×720 PNG
+Show:
+- Streamer name
+- Programme title
+- Game/category
+- Viewer count or guide description if available
+- Channel icon

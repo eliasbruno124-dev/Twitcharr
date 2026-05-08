@@ -1,22 +1,16 @@
-# Twitcharr — Documentation Assets
+# Screenshot Slots
 
-This folder holds the screenshots embedded in the project [README](../README.md).
+The main README links to the PNG files listed below. They can be added later; GitHub will render them automatically once the files exist.
 
-**How to use:** for each `.txt` file below there is a planned `.png` next to it.
-Take a screenshot matching the description in the `.txt`, save it under the
-matching `.png` filename, and the README will pick it up automatically — no
-README edit needed.
-
-| Filename | Used in README at |
+| File | Where it appears |
 |---|---|
-| `01-plugin-settings.png` | Top of the README, hero shot |
-| `02-actions.png` | After the install section |
-| `03-channel-grid.png` | After the setup section |
-| `04-epg-detail.png` | After the discovery tokens table |
-| `05-settings-quality.png` | After the settings reference table |
-| `06-health-check.png` | After the actions table |
-| `07-discord-notification.png` | In the Discord notifications section |
-| `08-self-update.png` | In the self-update section |
+| `01-plugin-settings.png` | Settings overview |
+| `02-actions.png` | Actions overview |
+| `03-channel-grid.png` | Live TV channel grid |
+| `04-epg-detail.png` | Guide detail view |
+| `05-settings-quality.png` | Quality and bandwidth settings |
+| `06-health-check.png` | Status / health-check output |
+| `07-discord-notification.png` | Discord test or go-live notification |
+| `08-self-update.png` | Update check or apply-update result |
 
-Recommended capture sizes: **1280×720** or **1600×900** PNG, JPEG also fine.
-GitHub renders inline at full width.
+Keep screenshots at `1600x900` or `1280x720` when possible. Use real-looking sample data, but do not include private tokens, webhook URLs or secrets.

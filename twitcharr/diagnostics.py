@@ -217,6 +217,8 @@ def health_check(
         "last_bandwidth_at": _humanize_age(state.get("last_bandwidth_at")),
         "last_update_check": _humanize_age(state.get("last_update_check")),
         "update_check": state.get("update_check"),
+        "last_auto_update": _humanize_age(state.get("last_auto_update")),
+        "auto_update_result": state.get("auto_update_result"),
     }
 
     # Channel + EPG counts (best-effort — Django models may not be importable

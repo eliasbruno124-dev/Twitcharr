@@ -1,23 +1,12 @@
 FILENAME: 06-health-check.png
-USED IN README: after the actions table
 
-WHAT TO CAPTURE:
-The output / result panel of clicking the "System status" action — shows
-the JSON or formatted result with all the diagnostic info.
+Capture the System status / health-check action result.
 
-CHECKLIST:
-- Click "Show status" action (the indigo filled button)
-- Capture the result modal / output panel containing:
-    * plugin_version, scheduler_running
-    * twitch_api: {status: "ok"}
-    * streamlink: {status: "ok", path: ...}
-    * ttvlol_plugin: {status: "ok", age: "..."}
-    * media_server: {status: "ok", server_name: ..., version: ...}
-    * proxies: list of 4 proxies with latency_ms numbers
-    * proxies_summary: "4/4 reachable"
-    * channels_managed, streams_managed, epg_data_rows
-    * last_epg_refresh, last_bandwidth_mbps
-- A green "OK" header or indicator if available
-- If formatted nicely as a JSON tree or table — even better
-
-RESOLUTION: 1280×900 PNG (taller than wide is fine for a JSON dump)
+Show:
+- settings_validation
+- twitch_api
+- streamlink
+- ttvlol_plugin
+- media_server
+- proxies_summary
+- last refresh timestamps

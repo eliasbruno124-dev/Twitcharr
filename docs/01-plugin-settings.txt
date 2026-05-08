@@ -1,20 +1,12 @@
 FILENAME: 01-plugin-settings.png
-USED IN README: hero shot at the top, right after the disclaimer
 
-WHAT TO CAPTURE:
-The Twitcharr plugin settings page in Dispatcharr — full settings panel
-visible, ideally with example logins or discovery tokens already filled in.
+Capture the Twitcharr settings page.
 
-CHECKLIST:
-- Dispatcharr → Plugins → Twitcharr → Settings tab
-- "Twitch logins / discovery" textarea filled with a realistic mix, e.g.
-      gronkh
-      papaplatte
-      top:de:25
-      game:Just Chatting:10
-- The "Trending — countries (ISO codes)" field showing "de, en"
-- "Stream quality" dropdown set to "adaptive"
-- "Live preview thumbnails" toggle ON
-- Capture the whole settings form so the variety of fields is visible
+Show:
+- Twitch channels / discovery with comma-separated examples
+- Trending countries and counts
+- Stream quality set to adaptive
+- Show offline channels and placeholder settings
+- Offline channel icon field
 
-RESOLUTION: 1600×900 or 1280×720 PNG
+Avoid showing real secrets.

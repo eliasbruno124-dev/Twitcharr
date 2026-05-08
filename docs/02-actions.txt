@@ -1,20 +1,19 @@
 FILENAME: 02-actions.png
-USED IN README: after the "Install" section
 
-WHAT TO CAPTURE:
-The actions / buttons row of the Twitcharr plugin in Dispatcharr — every
-colored button visible. This is the "control panel" of the plugin and is
-the most visually striking shot.
+Capture the Twitcharr actions page.
 
-CHECKLIST:
-- Dispatcharr → Plugins → Twitcharr → Actions tab (or wherever buttons live)
-- All ~14 action buttons visible: Sync now (blue filled), Refresh EPG
-  (green filled), Sync channels (blue outline), Run full refresh (green
-  outline), Show status (indigo filled), Test proxies (indigo outline),
-  Send Discord test (pink outline), Measure bandwidth (teal filled),
-  Refresh media server (violet outline), Update ttv.lol (orange outline),
-  Check for update (cyan outline), Apply update (cyan filled), Donate
-  (pink outline), Uninstall (red outline)
-- Capture the whole button grid
-
-RESOLUTION: 1600×900 or 1280×720 PNG
+Show:
+- Sync now
+- Refresh EPG
+- Sync channels
+- Full refresh
+- Show status
+- Test connection
+- Test proxies
+- Send Discord test
+- Measure bandwidth
+- Refresh media server
+- Update ttv.lol
+- Check/apply update
+- Donate via PayPal
+- Uninstall

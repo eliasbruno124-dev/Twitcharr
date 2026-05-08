@@ -1,20 +1,11 @@
 FILENAME: 05-settings-quality.png
-USED IN README: after the settings reference table
 
-WHAT TO CAPTURE:
-Close-up of the quality / bandwidth section of the plugin settings — to
-sell the adaptive-quality + bandwidth probe story.
+Capture the quality and bandwidth settings.
 
-CHECKLIST:
-- Dispatcharr → Plugins → Twitcharr → Settings, scroll to:
-    * "Stream quality" dropdown (set to "adaptive")
-    * "Connection bandwidth (Mbps)" field
-    * "Bandwidth safety margin (%)" field (50)
-    * "Fastest possible startup" toggle (ON)
-    * "Low-latency mode" toggle (ON)
-- Tighter crop than the hero shot — just these 5 fields and their
-  description text, so the reader sees the explanations
-- If possible, show the description text under "Stream quality" that
-  explains the chain mechanism
-
-RESOLUTION: 1280×720 or 1024×768 PNG (tighter crop)
+Show:
+- Stream quality
+- Connection bandwidth
+- Bandwidth safety margin
+- Fast startup
+- Low-latency mode
+- Measure bandwidth action result if visible

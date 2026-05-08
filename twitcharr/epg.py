@@ -123,7 +123,7 @@ def build_entries(
     for login in logins:
         u = users.get(login)
         if not u:
-            logger.warning("Twitch login not found: %s", login)
+            logger.warning("Twitch channel not found: %s", login)
             continue
 
         s = streams.get(login)
@@ -222,7 +222,7 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
     now = datetime.now(timezone.utc)
     tv = ET.Element("tv", {
         "generator-info-name": "Twitcharr",
-        "generator-info-url": "https://github.com/eliasbruno124/Twitcharr",
+        "generator-info-url": "https://github.com/eliasbruno124-dev/Dispatcharr-Twitch-EPG",
     })
 
     for e in entries:

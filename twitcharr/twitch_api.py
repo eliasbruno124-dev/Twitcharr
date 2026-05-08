@@ -198,7 +198,7 @@ class TwitchClient:
                     continue
                 user = ((item.get("data") or {}).get("user") or None)
                 if not user:
-                    logger.warning("Twitch login not found: %s", login)
+                    logger.warning("Twitch channel not found: %s", login)
                     continue
 
                 normalized_login = (user.get("login") or login).lower()
@@ -335,6 +335,9 @@ def parse_login_list(raw: str) -> list[dict]:
         {"type": "top",   "languages": ["de"], "limit": int}
         {"type": "search","value": "<free text>", "limit": int}
 
+    Input can be separated by new lines or commas:
+        gronkh, papaplatte, knossi
+
     Discovery tokens accepted (case-insensitive on the prefix):
         game:Just Chatting           -> top 10 streams in that category
         game:Just Chatting:25        -> top 25
@@ -347,27 +350,52 @@ def parse_login_list(raw: str) -> list[dict]:
     if not raw:
         return []
     items: list[dict] = []
-    for token in raw.replace("\r", "\n").split("\n"):
-        # Allow both newline- and comma-separated *plain* logins, but never
-        # split tokens that start with a discovery prefix (categories may
-        # contain commas, e.g. "game:Grand Theft Auto V, RP").
-        sub_tokens = [token] if _is_discovery(token) else token.split(",")
-        for raw_part in sub_tokens:
-            t = raw_part.strip()
-            if not t:
-                continue
-            parsed = _parse_single_token(t)
-            if parsed is not None:
-                items.append(parsed)
+    for t in _iter_input_tokens(raw):
+        parsed = _parse_single_token(t)
+        if parsed is not None:
+            items.append(parsed)
     return _dedup_items(items)
 
 
-_DISCOVERY_PREFIXES = ("game:", "top", "search:")
+def _iter_input_tokens(raw: str):
+    for line in raw.replace("\r", "\n").replace(";", "\n").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if _should_keep_comma_token(line):
+            yield line
+            continue
+        for part in line.split(","):
+            part = part.strip()
+            if part:
+                yield part
 
 
-def _is_discovery(t: str) -> bool:
-    s = t.strip().lower()
-    return s.startswith("game:") or s == "top" or s.startswith("top:") or s.startswith("search:")
+def _should_keep_comma_token(line: str) -> bool:
+    """Keep `top:de,en:50` intact while allowing comma-separated logins.
+
+    Category/search names with commas are ambiguous in a free-text textarea; put
+    those discovery tokens on their own line without extra comma-separated items.
+    """
+    low = line.lower()
+    if not low.startswith("top:") or "," not in line:
+        return False
+
+    rest = line[4:].strip()
+    if not rest:
+        return False
+    parts = [p.strip() for p in rest.split(":") if p.strip()]
+    if not parts:
+        return False
+    for part in parts:
+        if part.isdigit():
+            continue
+        codes = [c.strip() for c in part.split(",") if c.strip()]
+        if not codes:
+            return False
+        if any(not c.replace("-", "").isalpha() for c in codes):
+            return False
+    return True
 
 
 def _parse_single_token(t: str) -> dict | None:

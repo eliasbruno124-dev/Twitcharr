@@ -32,9 +32,9 @@ logger = logging.getLogger(__name__)
 # Cloudflare's anonymous speedtest endpoint — same one speed.cloudflare.com
 # uses for its public test. No auth, no tokens, no rate limits we care about.
 SPEEDTEST_URL_TEMPLATE = "https://speed.cloudflare.com/__down?bytes={bytes}"
-DEFAULT_PAYLOAD_BYTES = 25_000_000  # 25 MB — large enough for a stable read
-DEFAULT_TIMEOUT_S = 15
-DEFAULT_PROBES = 3  # take the *minimum* throughput across N back-to-back probes
+DEFAULT_PAYLOAD_BYTES = 8_000_000  # fast enough for plugin action timeouts
+DEFAULT_TIMEOUT_S = 8
+DEFAULT_PROBES = 2  # take the *minimum* throughput across N back-to-back probes
 
 
 # (label, approx upstream bitrate Mbps) — Twitch's published live encoder

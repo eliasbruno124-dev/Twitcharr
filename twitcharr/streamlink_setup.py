@@ -343,14 +343,20 @@ def sync_channels(
     # 'show offline' is OFF, or logins removed from the configured list).
     pruned_channels, pruned_streams = _prune_unmanaged(synced_tvg_ids)
 
+    visible_channel_names = [l for l in synced_logins if l != PLACEHOLDER_LOGIN]
     return {
+        "message": (
+            "No Twitch streams are live; placeholder channel is active."
+            if keep_placeholder and not has_live
+            else f"Synced {len(visible_channel_names)} Twitch channels."
+        ),
         "channels_created": created_channels,
         "channels_updated": updated_channels,
         "channels_pruned": pruned_channels,
         "streams_created": created_streams,
         "streams_pruned": pruned_streams,
         "placeholder_active": (keep_placeholder and not has_live),
-        "logins": [l for l in synced_logins if l != PLACEHOLDER_LOGIN],
+        "channel_names": visible_channel_names,
         "stream_profile_id": profile.id,
         "channel_group_id": group.id,
     }

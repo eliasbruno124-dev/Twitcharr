@@ -1,28 +1,11 @@
 FILENAME: 08-self-update.png
-USED IN README: in the "Self-update" section
 
-WHAT TO CAPTURE:
-The result panel after clicking "Check for plugin update" or "Apply
-update" — proves the in-Dispatcharr update flow works without zip uploads.
+Capture Check for plugin update or Apply plugin update.
 
-CHECKLIST (option A — "Check for update"):
-- Click the cyan "Check for update" action button
-- Capture the result panel showing:
-    * status: "ok"
-    * current_version: "1.2.0"
-    * latest_version: "1.2.0" (or higher if a new release exists)
-    * update_available: false (or true)
-    * release_url: github.com/eliasbruno124/Twitcharr/releases/latest
+Show:
+- current_version
+- latest_version
+- update_available or applied
+- release_url
 
-CHECKLIST (option B — "Apply update", if there's a newer version):
-- Click "Apply update", confirm the dialog
-- Capture the result showing:
-    * status: "ok", applied: true
-    * files_written: <number>
-    * latest_version, previous_version
-    * "next" message saying to reload Dispatcharr
-
-Either screenshot works. Option B is more dramatic if you have a release
-to test against.
-
-RESOLUTION: 1280×800 PNG
+Current plugin version target: 1.2.1.

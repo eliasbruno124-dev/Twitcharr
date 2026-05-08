@@ -1,4 +1,4 @@
-"""Twitcharr — premium Twitch live-TV plugin for Dispatcharr.
+"""Twitcharr — Twitch live-TV plugin for Dispatcharr.
 
 Combines:
   * an auto-updated streamlink-ttvlol twitch.py for ad-bypass low-latency playback
@@ -28,8 +28,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 PLUGIN_KEY = "twitcharr"
-DONATE_URL = "https://github.com/sponsors/eliasbruno124"
-GITHUB_REPO_URL = "https://github.com/eliasbruno124/Twitcharr"
+GITHUB_REPO = "eliasbruno124-dev/Dispatcharr-Twitch-EPG"
+GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}"
+DONATE_URL = "https://paypal.me/eliasbruno124"
+DEFAULT_OFFLINE_ICON_URL = (
+    f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/twitcharr/assets/offline.svg"
+)
 DEFAULT_TTVLOL_PROXY_SERVERS = (
     "https://eu.luminous.dev,"
     "https://eu2.luminous.dev,"
@@ -41,7 +45,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "starting_channel_number": 9000,
     "data_dir": "/app/data/plugins/twitcharr",
     "include_offline": True,
-    "offline_icon_url": "",
+    "offline_icon_url": DEFAULT_OFFLINE_ICON_URL,
     "use_profile_pic_when_just_chatting": True,
     "epg_refresh_interval_minutes": 2,
     "ttvlol_update_time": "04:30",
@@ -55,6 +59,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "media_server_api_key": "",
     "keep_placeholder": True,
     "auto_check_updates": True,
+    "auto_apply_updates": True,
     "use_live_thumbnails": True,
     "fast_startup": True,
     "discord_webhook_url": "",
@@ -81,6 +86,80 @@ def _merge_defaults(settings: dict | None) -> dict:
             merged[field_id] = field.get("default")
     merged.update(settings or {})
     return merged
+
+
+def _text_setting(
+    settings: dict,
+    key: str,
+    default: str = "",
+    *,
+    fallback_on_empty: bool = False,
+) -> str:
+    if key not in settings or settings.get(key) is None:
+        return default
+    value = str(settings.get(key)).strip()
+    if fallback_on_empty and not value:
+        return default
+    return value
+
+
+def _bool_setting(settings: dict, key: str, default: bool = False) -> bool:
+    value = settings.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on", "enabled"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", "disabled", ""}:
+            return False
+    return bool(value)
+
+
+def _int_setting(
+    settings: dict,
+    key: str,
+    default: int,
+    *,
+    min_value: int | None = None,
+    max_value: int | None = None,
+) -> int:
+    try:
+        value = int(float(settings.get(key, default)))
+    except (TypeError, ValueError):
+        value = default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
+def _float_setting(settings: dict, key: str, default: float) -> float:
+    try:
+        return float(settings.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _proxy_servers(settings: dict) -> str:
+    # Missing value means "use defaults"; an explicitly empty field means
+    # "disable proxy", matching the settings description.
+    return _text_setting(settings, "ttvlol_proxy_servers", DEFAULT_TTVLOL_PROXY_SERVERS)
+
+
+def _offline_icon_url(settings: dict) -> str:
+    raw = _text_setting(
+        settings,
+        "offline_icon_url",
+        DEFAULT_OFFLINE_ICON_URL,
+        fallback_on_empty=True,
+    )
+    if raw.lower() in {"none", "off", "disable", "disabled", "-"}:
+        return ""
+    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -132,14 +211,14 @@ def _resolve_logins(settings: dict, client) -> list[str]:
 
     # Convenience: dedicated UI fields synthesize discovery tokens so users
     # don't need to know the `top:de:25` syntax.
-    top_count = max(0, int(settings.get("discovery_top_count") or 0))
+    top_count = _int_setting(settings, "discovery_top_count", 0, min_value=0, max_value=100)
     languages_raw = (settings.get("discovery_top_languages") or "").strip()
     if top_count and languages_raw:
         for code in (c.strip().lower() for c in languages_raw.replace(";", ",").split(",")):
             if code and code.replace("-", "").isalpha():
                 items.append({"type": "top", "languages": [code], "limit": top_count})
 
-    trending_count = max(0, int(settings.get("discovery_trending_count") or 0))
+    trending_count = _int_setting(settings, "discovery_trending_count", 0, min_value=0, max_value=100)
     if trending_count:
         items.append({"type": "top", "languages": [], "limit": trending_count})
 
@@ -156,14 +235,14 @@ def _resolve_stream_quality(settings: dict) -> str:
     then picks the highest available variant for each stream — and falls
     back gracefully if the streamer doesn't expose that exact one.
     """
-    quality = (settings.get("stream_quality") or "best").strip()
+    quality = _text_setting(settings, "stream_quality", "adaptive", fallback_on_empty=True)
     if quality != "adaptive":
         return quality
 
     from . import bandwidth
 
-    margin = int(settings.get("bandwidth_safety_margin_pct") or 50)
-    mbps = float(settings.get("connection_bandwidth_mbps") or 0)
+    margin = _int_setting(settings, "bandwidth_safety_margin_pct", 50, min_value=0, max_value=200)
+    mbps = _float_setting(settings, "connection_bandwidth_mbps", 0)
     if mbps <= 0:
         # Use the most recent measured value if the user hasn't pinned one.
         try:
@@ -194,10 +273,10 @@ def _gather_entries(settings: dict, *, client=None):
     entries = epg.build_entries(
         client,
         logins,
-        use_profile_pic_when_just_chatting=bool(settings.get("use_profile_pic_when_just_chatting", True)),
-        include_offline=bool(settings.get("include_offline", True)),
-        offline_icon_url=(settings.get("offline_icon_url") or "").strip(),
-        use_live_thumbnails=bool(settings.get("use_live_thumbnails", True)),
+        use_profile_pic_when_just_chatting=_bool_setting(settings, "use_profile_pic_when_just_chatting", True),
+        include_offline=_bool_setting(settings, "include_offline", True),
+        offline_icon_url=_offline_icon_url(settings),
+        use_live_thumbnails=_bool_setting(settings, "use_live_thumbnails", True),
         cache_bust=cache_bust,
     )
     return client, logins, entries
@@ -210,6 +289,7 @@ def _write_epg(settings: dict, entries: list[dict]) -> dict:
     channels, programmes = epg.write_xmltv(entries, epg.xmltv_path(data_dir))
     db_result = epg.upsert_db(entries, data_dir)
     return {
+        "message": f"Wrote guide for {channels} channels and {programmes} programmes.",
         "channels": channels,
         "programmes": programmes,
         "xmltv_path": epg.xmltv_path(data_dir),
@@ -223,16 +303,24 @@ def _sync_channels_from_entries(settings: dict, entries: list[dict]) -> dict:
     return streamlink_setup.sync_channels(
         entries,
         data_dir=_data_dir(settings),
-        group_name=(settings.get("channel_group_name") or DEFAULT_SETTINGS["channel_group_name"]),
-        starting_channel_number=int(
-            settings.get("starting_channel_number") or DEFAULT_SETTINGS["starting_channel_number"]
+        group_name=_text_setting(
+            settings,
+            "channel_group_name",
+            DEFAULT_SETTINGS["channel_group_name"],
+            fallback_on_empty=True,
         ),
-        proxy_servers=(settings.get("ttvlol_proxy_servers") or DEFAULT_TTVLOL_PROXY_SERVERS),
+        starting_channel_number=_int_setting(
+            settings,
+            "starting_channel_number",
+            DEFAULT_SETTINGS["starting_channel_number"],
+            min_value=1,
+        ),
+        proxy_servers=_proxy_servers(settings),
         quality=_resolve_stream_quality(settings),
-        low_latency=bool(settings.get("enable_low_latency", True)),
-        fast_startup=bool(settings.get("fast_startup", True)),
-        keep_placeholder=bool(settings.get("keep_placeholder", True)),
-        offline_icon_url=(settings.get("offline_icon_url") or "").strip(),
+        low_latency=_bool_setting(settings, "enable_low_latency", True),
+        fast_startup=_bool_setting(settings, "fast_startup", True),
+        keep_placeholder=_bool_setting(settings, "keep_placeholder", True),
+        offline_icon_url=_offline_icon_url(settings),
     )
 
 
@@ -247,6 +335,11 @@ def _run_update_ttvlol(settings: dict, *, force: bool = False) -> dict:
     result = ttvlol.update_ttvlol(data_dir, force=force)
     return {
         "status": "ok",
+        "message": (
+            f"streamlink-ttvlol updated ({result.bytes_written} bytes)."
+            if result.updated
+            else f"streamlink-ttvlol checked: {result.skipped_reason or 'already current'}."
+        ),
         "updated": result.updated,
         "release_tag": result.release_tag,
         "path": result.target_path,
@@ -265,18 +358,20 @@ def _run_refresh_epg(settings: dict, *, prebuilt=None) -> dict:
         client, logins, entries = prebuilt
 
     if not logins:
-        return {"status": "error", "message": "No Twitch logins configured"}
+        return {"status": "error", "message": "No Twitch channel names configured"}
+    if not entries and not getattr(client, "_users", {}):
+        return {"status": "error", "message": "No matching Twitch channels found for the configured input"}
 
     # Make sure offline placeholders show up in the guide too — write_xmltv
     # mirrors whatever we feed it, but the placeholder channel is created in
     # streamlink_setup, so for guide consistency we always include it here too
     # if there are no live entries.
     epg_entries = list(entries)
-    if not any(e.get("live") for e in epg_entries) and bool(settings.get("keep_placeholder", True)):
+    if not any(e.get("live") for e in epg_entries) and _bool_setting(settings, "keep_placeholder", True):
         from . import streamlink_setup
 
         epg_entries.append(streamlink_setup._placeholder_entry(
-            offline_icon_url=(settings.get("offline_icon_url") or "").strip(),
+            offline_icon_url=_offline_icon_url(settings),
         ))
 
     write_result = _write_epg(settings, epg_entries)
@@ -294,8 +389,18 @@ def _run_refresh_epg(settings: dict, *, prebuilt=None) -> dict:
 
     return {
         "status": "ok",
-        "logins_resolved": len(logins),
         **write_result,
+        "message": (
+            f"Guide refreshed for {write_result.get('channels', 0)} channels; "
+            f"media server refresh: {refresh_status.get('status')}."
+        ),
+        "channels_resolved": len(logins),
+        "channels_written": write_result.get("channels", 0),
+        "programmes_written": write_result.get("programmes", 0),
+        "media_server_status": refresh_status.get("status"),
+        "media_server_message": refresh_status.get("message", ""),
+        "discord_status": discord_status.get("status"),
+        "discord_posted": discord_status.get("posted", 0),
         "media_server_refresh": refresh_status,
         "discord_notifications": discord_status,
     }
@@ -307,19 +412,23 @@ def _run_sync_channels(settings: dict, *, prebuilt=None) -> dict:
     else:
         client, logins, entries = prebuilt
     if not logins:
-        return {"status": "error", "message": "No Twitch logins configured"}
-    if not entries and not bool(settings.get("keep_placeholder", True)):
-        return {"status": "error", "message": "No matching Twitch users found for the configured logins"}
+        return {"status": "error", "message": "No Twitch channel names configured"}
+    if not entries and not getattr(client, "_users", {}):
+        return {"status": "error", "message": "No matching Twitch channels found for the configured input"}
     result = _sync_channels_from_entries(settings, entries)
-    return {"status": "ok", **result}
+    if not entries:
+        result["message"] = (
+            "No configured Twitch channels are live right now. Managed offline channels were pruned."
+        )
+    return {"status": "ok", "channels_synced": len(result.get("channel_names") or []), **result}
 
 
 def _run_setup(settings: dict) -> dict:
     """Idempotent one-click setup. Order matters:
         1. ttv.lol so playback works
-        2. EPG so EPGData rows exist
-        3. Channels so they get linked to those EPGData rows immediately
-        4. Media-server refresh so Emby/Jellyfin picks up the lineup at once
+        2. Channels / Streams so the lineup exists
+        3. EPG rows so channels get guide data
+        4. Media-server refresh after both channel and guide writes
     """
     from . import streamlink_setup, ttvlol
 
@@ -329,10 +438,10 @@ def _run_setup(settings: dict) -> dict:
     ttv_result = ttvlol.update_ttvlol(data_dir, force=False)
     profile = streamlink_setup.get_or_create_stream_profile(
         data_dir=data_dir,
-        proxy_servers=(settings.get("ttvlol_proxy_servers") or DEFAULT_TTVLOL_PROXY_SERVERS),
+        proxy_servers=_proxy_servers(settings),
         quality=_resolve_stream_quality(settings),
-        low_latency=bool(settings.get("enable_low_latency", True)),
-        fast_startup=bool(settings.get("fast_startup", True)),
+        low_latency=_bool_setting(settings, "enable_low_latency", True),
+        fast_startup=_bool_setting(settings, "fast_startup", True),
     )
 
     from . import epg
@@ -341,6 +450,7 @@ def _run_setup(settings: dict) -> dict:
 
     result: dict[str, Any] = {
         "status": "ok",
+        "message": "Base setup complete. Scheduler is enabled.",
         "data_dir": data_dir,
         "ttvlol_release_tag": ttv_result.release_tag,
         "ttvlol_path": ttv_result.target_path,
@@ -354,16 +464,17 @@ def _run_setup(settings: dict) -> dict:
         client, logins, entries = prebuilt
         if not logins:
             result["next"] = (
-                "No Twitch users could be resolved from the configured input. Check the "
-                "logins / discovery tokens in the channels field."
+                "No Twitch channels could be resolved from the configured input. Check the "
+                "channel names / discovery tokens in the channels field."
             )
             return result
-        result["epg"] = _run_refresh_epg(settings, prebuilt=prebuilt)
         result["sync"] = _run_sync_channels(settings, prebuilt=prebuilt)
+        result["epg"] = _run_refresh_epg(settings, prebuilt=prebuilt)
+        result["message"] = "Setup complete: channels, guide, scheduler and integrations were refreshed."
         result["next"] = "Done. Channels, guide and the auto-updater are active."
     else:
         result["next"] = (
-            "Base setup is done and the daily ttv.lol updater is active. Add Twitch logins "
+            "Base setup is done and the daily ttv.lol updater is active. Add Twitch channel names "
             "(or a discovery token like 'top:de:25'), then run setup again or wait for the "
             "next automatic refresh."
         )
@@ -388,19 +499,20 @@ def _run_all(settings: dict) -> dict:
 
     if prebuilt is not None:
         try:
-            out["steps"]["refresh_epg"] = _run_refresh_epg(settings, prebuilt=prebuilt)
-        except Exception as e:
-            logger.exception("refresh_epg failed")
-            out["steps"]["refresh_epg"] = {"status": "error", "message": str(e)}
-
-        try:
             out["steps"]["sync_channels"] = _run_sync_channels(settings, prebuilt=prebuilt)
         except Exception as e:
             logger.exception("sync_channels failed")
             out["steps"]["sync_channels"] = {"status": "error", "message": str(e)}
 
+        try:
+            out["steps"]["refresh_epg"] = _run_refresh_epg(settings, prebuilt=prebuilt)
+        except Exception as e:
+            logger.exception("refresh_epg failed")
+            out["steps"]["refresh_epg"] = {"status": "error", "message": str(e)}
+
     has_error = any(s.get("status") == "error" for s in out["steps"].values())
     out["status"] = "partial" if has_error else "ok"
+    out["message"] = "Full refresh finished." if not has_error else "Full refresh finished with errors."
     return out
 
 
@@ -416,7 +528,7 @@ def _trigger_discord_go_live(settings: dict, entries: list[dict]) -> dict:
     state from the previous cycle. Updates the persisted set after posting,
     so subsequent cycles only post genuinely *new* go-lives.
     """
-    webhook = (settings.get("discord_webhook_url") or "").strip()
+    webhook = _text_setting(settings, "discord_webhook_url")
     if not webhook:
         return {"status": "skipped", "message": "no webhook configured"}
 
@@ -444,8 +556,8 @@ def _trigger_discord_go_live(settings: dict, entries: list[dict]) -> dict:
 
 
 def _trigger_media_server(settings: dict) -> dict:
-    url = (settings.get("media_server_url") or "").strip()
-    key = (settings.get("media_server_api_key") or "").strip()
+    url = _text_setting(settings, "media_server_url")
+    key = _text_setting(settings, "media_server_api_key")
     if not url or not key:
         return {"status": "skipped", "message": "No Emby/Jellyfin URL or API key configured"}
     try:
@@ -458,7 +570,147 @@ def _trigger_media_server(settings: dict) -> dict:
 
 
 def _run_refresh_media_server(settings: dict) -> dict:
-    return {"status": "ok", "trigger": _trigger_media_server(settings)}
+    trigger = _trigger_media_server(settings)
+    return {
+        "status": trigger.get("status", "ok"),
+        "message": trigger.get("message", "Media-server refresh checked."),
+        "media_server_status": trigger.get("status"),
+        "task_id": trigger.get("task_id"),
+        "task_name": trigger.get("task_name"),
+        "trigger": trigger,
+    }
+
+
+def _validate_settings(settings: dict) -> dict:
+    """Cheap local settings validation for the action results.
+
+    It intentionally avoids network calls; `test_connection` and `status` add
+    the live checks separately.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    channels = _text_setting(settings, "channels")
+    for line in channels.replace("\r", "\n").split("\n"):
+        token = line.strip()
+        if not token:
+            continue
+        low = token.lower()
+        if "oauth" in low or low.startswith(("client-id", "client_id", "client secret", "client-secret")):
+            errors.append(
+                "Remove Twitch OAuth / Client-ID text from 'Twitch channels / discovery'. "
+                "Twitcharr only needs channel names or discovery tokens."
+            )
+            break
+
+    try:
+        raw_start = int(float(settings.get("starting_channel_number", 9000)))
+    except (TypeError, ValueError):
+        raw_start = 9000
+    if raw_start < 1:
+        errors.append("Starting channel number must be 1 or higher.")
+
+    quality = _text_setting(settings, "stream_quality", "adaptive", fallback_on_empty=True)
+    valid_qualities = {
+        "adaptive", "best", "1080p60", "1080p", "720p60", "720p",
+        "480p", "360p", "160p", "worst",
+    }
+    if quality not in valid_qualities:
+        warnings.append(f"Unknown stream quality '{quality}' will be passed to Streamlink as-is.")
+
+    bandwidth_mbps = _float_setting(settings, "connection_bandwidth_mbps", 0)
+    if bandwidth_mbps < 0:
+        errors.append("Connection bandwidth must be 0 or higher.")
+
+    margin = _int_setting(settings, "bandwidth_safety_margin_pct", 50, min_value=0, max_value=200)
+    if margin != _int_setting(settings, "bandwidth_safety_margin_pct", 50):
+        warnings.append("Bandwidth safety margin is clamped to the supported 0-200% range.")
+
+    time_raw = _text_setting(settings, "ttvlol_update_time", "04:30", fallback_on_empty=True)
+    try:
+        hour, minute = [int(part) for part in time_raw.split(":", 1)]
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            raise ValueError
+    except Exception:
+        warnings.append("Daily ttv.lol update time should be HH:MM, for example 04:30.")
+
+    proxy_servers = _proxy_servers(settings)
+    for url in [u.strip() for u in proxy_servers.split(",") if u.strip()]:
+        if not url.lower().startswith(("http://", "https://")):
+            warnings.append(f"Proxy URL '{url}' should start with http:// or https://.")
+
+    offline_icon = _offline_icon_url(settings)
+    if offline_icon and not offline_icon.lower().startswith(("http://", "https://", "data:")):
+        warnings.append("Offline channel icon should be an http(s) URL or a data: URL.")
+
+    media_url = _text_setting(settings, "media_server_url")
+    media_key = _text_setting(settings, "media_server_api_key")
+    if bool(media_url) != bool(media_key):
+        warnings.append("Set both Emby/Jellyfin URL and API key, or leave both empty.")
+
+    languages_raw = _text_setting(settings, "discovery_top_languages")
+    bad_languages = [
+        code.strip()
+        for code in languages_raw.replace(";", ",").split(",")
+        if code.strip() and not code.strip().replace("-", "").isalpha()
+    ]
+    if bad_languages:
+        warnings.append(f"Invalid language code(s): {', '.join(bad_languages)}.")
+
+    return {
+        "status": "error" if errors else ("warning" if warnings else "ok"),
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def _run_test_connection(settings: dict) -> dict:
+    from . import diagnostics
+
+    validation = _validate_settings(settings)
+    twitch = diagnostics.check_twitch_api()
+    media = diagnostics.check_media_server(
+        base_url=_text_setting(settings, "media_server_url"),
+        api_key=_text_setting(settings, "media_server_api_key"),
+    )
+    streamlink = diagnostics.check_streamlink()
+
+    failures: list[str] = []
+    if validation["status"] == "error":
+        failures.append("settings")
+    if twitch.get("status") != "ok":
+        failures.append("twitch_api")
+    if media.get("status") == "error":
+        failures.append("media_server")
+    if streamlink.get("status") not in {"ok", "missing"}:
+        failures.append("streamlink")
+
+    status = "error" if failures else ("degraded" if streamlink.get("status") == "missing" else "ok")
+    message = (
+        "Connection OK: Twitch metadata works anonymously; no Twitch account login, OAuth or API key is needed."
+        if status == "ok"
+        else "Connection check finished with issues. See the returned status fields."
+    )
+    return {
+        "status": status,
+        "message": message,
+        "summary": (
+            "Anonymous Twitch metadata connection works; no Twitch OAuth, Client ID, Client Secret or account login is required."
+            if twitch.get("status") == "ok"
+            else "Twitch metadata connection failed."
+        ),
+        "oauth_required": False,
+        "twitch_credentials_required": False,
+        "settings_status": validation.get("status"),
+        "twitch_status": twitch.get("status"),
+        "media_server_status": media.get("status"),
+        "streamlink_status": streamlink.get("status"),
+        "settings_validation": validation,
+        "twitch_api": twitch,
+        "media_server": media,
+        "streamlink": streamlink,
+        "failures": failures,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -475,25 +727,41 @@ def _run_status(settings: dict) -> dict:
     Emby/Jellyfin, scheduler health, last refresh timestamps, channel counts."""
     from . import diagnostics
 
-    return diagnostics.health_check(
+    out = diagnostics.health_check(
         settings=settings,
         data_dir=_data_dir(settings),
         plugin_version=Plugin.version,
         scheduler_running=_scheduler_is_running(),
     )
+    validation = _validate_settings(settings)
+    out["settings_validation"] = validation
+    if validation["status"] == "error":
+        out["status"] = "degraded"
+        reasons = list(out.get("degraded_reasons") or [])
+        reasons.append("settings")
+        out["degraded_reasons"] = reasons
+    out["message"] = (
+        "System status OK."
+        if out.get("status") == "ok"
+        else f"System status {out.get('status')}: {', '.join(out.get('degraded_reasons') or [])}"
+    )
+    return out
 
 
 def _run_test_proxies(settings: dict) -> dict:
     """Probe every ttv.lol proxy URL and report HTTP code + latency."""
     from . import diagnostics
 
-    csv = settings.get("ttvlol_proxy_servers") or ""
+    csv = _proxy_servers(settings)
     results = diagnostics.test_proxies(csv, timeout=5.0)
     alive = sum(1 for r in results if r.get("status") == "ok")
     total = len(results)
     return {
         "status": "ok" if alive else ("error" if total else "skipped"),
+        "message": f"{alive}/{total} configured ttv.lol proxies reachable",
         "summary": f"{alive}/{total} proxies reachable",
+        "reachable": alive,
+        "total": total,
         "proxies": results,
         "next": (
             "Reorder or remove dead proxies in 'ttv.lol proxy servers' to speed up channel switching."
@@ -505,7 +773,7 @@ def _run_test_proxies(settings: dict) -> dict:
 
 def _run_test_discord(settings: dict) -> dict:
     """Send a one-off test embed to the Discord webhook."""
-    webhook = (settings.get("discord_webhook_url") or "").strip()
+    webhook = _text_setting(settings, "discord_webhook_url")
     if not webhook:
         return {"status": "skipped", "message": "discord_webhook_url is not set"}
 
@@ -522,7 +790,15 @@ def _run_test_discord(settings: dict) -> dict:
         "started_at": "",
         "viewer_count": 0,
     }
-    return notifications.post_go_live(webhook, [sample])
+    result = notifications.post_go_live(webhook, [sample])
+    return {
+        "message": (
+            f"Discord test sent ({result.get('posted', 0)} embed)."
+            if result.get("status") == "ok"
+            else "Discord test failed."
+        ),
+        **result,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -551,17 +827,54 @@ def _run_measure_bandwidth(settings: dict) -> dict:
     except Exception:
         logger.exception("Could not persist bandwidth probe result")
 
-    margin = int(settings.get("bandwidth_safety_margin_pct") or 50)
+    measured_mbps = round(result.mbps, 2)
+    saved_setting = False
+    save_error = ""
+    effective_settings = dict(settings)
+    effective_settings["connection_bandwidth_mbps"] = measured_mbps
+    try:
+        _save_setting("connection_bandwidth_mbps", measured_mbps)
+        saved_setting = True
+    except Exception as exc:
+        save_error = str(exc)
+        logger.exception("Could not persist measured connection bandwidth")
+
+    profile_update: dict[str, Any] = {"stream_profile_updated": False}
+    try:
+        from . import streamlink_setup
+
+        profile = streamlink_setup.get_or_create_stream_profile(
+            data_dir=_data_dir(effective_settings),
+            proxy_servers=_proxy_servers(effective_settings),
+            quality=_resolve_stream_quality(effective_settings),
+            low_latency=_bool_setting(effective_settings, "enable_low_latency", True),
+            fast_startup=_bool_setting(effective_settings, "fast_startup", True),
+        )
+        profile_update = {"stream_profile_updated": True, "stream_profile_id": profile.id}
+    except Exception as exc:
+        logger.exception("Could not update StreamProfile after bandwidth probe")
+        profile_update = {"stream_profile_updated": False, "stream_profile_error": str(exc)}
+
+    margin = _int_setting(settings, "bandwidth_safety_margin_pct", 50, min_value=0, max_value=200)
     description = bandwidth.describe_chain_for(result.mbps, safety_margin_pct=margin)
 
     return {
         "status": "ok",
+        "message": (
+            f"Measured {measured_mbps} Mbps. Preferred quality: "
+            f"{description.get('preferred_quality')}; chain: {description.get('fallback_chain')}"
+        ),
         **result.as_dict(),
         **description,
-        "active_now": (settings.get("stream_quality") or "").strip() == "adaptive",
+        "connection_bandwidth_mbps": measured_mbps,
+        "saved_setting": saved_setting,
+        "save_error": save_error,
+        **profile_update,
+        "active_now": _text_setting(settings, "stream_quality", "adaptive", fallback_on_empty=True) == "adaptive",
         "next": (
-            "Set 'Stream quality' to 'adaptive' (default in v1.0+) and re-run "
-            "'Sync channels' so the StreamProfile picks up this chain."
+            "Measurement saved to 'Connection bandwidth (Mbps)' and the StreamProfile was updated."
+            if saved_setting and profile_update.get("stream_profile_updated")
+            else "Measurement completed. If settings did not update visually, reload the plugin settings and run Sync channels once."
         ),
     }
 
@@ -602,10 +915,10 @@ def _run_donate(_settings: dict) -> dict:
     return {
         "status": "ok",
         "message": (
-            "Thanks for using Twitcharr! If it makes your media server "
-            "happy, consider supporting development."
+            "Thanks for using Twitcharr. Support development via PayPal:"
         ),
         "donate_url": DONATE_URL,
+        "paypal_url": DONATE_URL,
         "github_url": GITHUB_REPO_URL,
     }
 
@@ -670,14 +983,11 @@ def _release_job_lock(path: str) -> None:
 
 
 def _interval_minutes(settings: dict) -> int:
-    try:
-        return max(1, int(settings.get("epg_refresh_interval_minutes") or 2))
-    except (TypeError, ValueError):
-        return 2
+    return _int_setting(settings, "epg_refresh_interval_minutes", 2, min_value=1)
 
 
 def _ttvlol_update_minute(settings: dict) -> int:
-    raw = (settings.get("ttvlol_update_time") or "").strip()
+    raw = _text_setting(settings, "ttvlol_update_time")
     if not raw:
         cron = (settings.get("ttvlol_update_cron") or "30 4 * * *").strip().split()
         if len(cron) == 5 and cron[0].isdigit() and cron[1].isdigit():
@@ -713,19 +1023,30 @@ def _epg_due(settings: dict, state: dict, now: float) -> bool:
 
 
 def _update_check_due(settings: dict, state: dict, now: float) -> bool:
-    if not bool(settings.get("auto_check_updates", True)):
+    if not _bool_setting(settings, "auto_check_updates", True):
         return False
     last = float(state.get("last_update_check") or 0)
     return now - last >= UPDATE_CHECK_INTERVAL_SECONDS
 
 
+def _auto_apply_updates_enabled(settings: dict) -> bool:
+    return _bool_setting(settings, "auto_apply_updates", True)
+
+
 def _settings_have_twitch_inputs(settings: dict) -> bool:
-    return bool((settings.get("channels") or "").strip())
+    if _text_setting(settings, "channels"):
+        return True
+    if _int_setting(settings, "discovery_trending_count", 0, min_value=0) > 0:
+        return True
+    return bool(
+        _text_setting(settings, "discovery_top_languages")
+        and _int_setting(settings, "discovery_top_count", 0, min_value=0) > 0
+    )
 
 
 def _run_scheduled_tick() -> None:
     settings = _load_settings()
-    if not settings.get("schedule_enabled"):
+    if not _bool_setting(settings, "schedule_enabled", True):
         return
 
     now = time.time()
@@ -735,7 +1056,7 @@ def _run_scheduled_tick() -> None:
         lock = _job_lock(settings, "ttvlol_update", ttl_seconds=30 * 60)
         if lock:
             try:
-                result = _run_update_ttvlol(settings, force=False)
+                result = _run_update_ttvlol(settings, force=True)
                 state = _load_schedule_state(settings)
                 state.update({
                     "last_ttvlol_check": int(time.time()),
@@ -761,18 +1082,25 @@ def _run_scheduled_tick() -> None:
         if lock:
             try:
                 if not _settings_have_twitch_inputs(settings):
-                    return
-                prebuilt = _gather_entries(settings)
-                sync_result = _run_sync_channels(settings, prebuilt=prebuilt)
-                epg_result = _run_refresh_epg(settings, prebuilt=prebuilt)
-                state = _load_schedule_state(settings)
-                state.update({
-                    "last_epg_refresh": int(time.time()),
-                    "last_epg_status": "ok",
-                    "last_sync_result": sync_result,
-                    "last_epg_result": epg_result,
-                })
-                _save_schedule_state(settings, state)
+                    state = _load_schedule_state(settings)
+                    state.update({
+                        "last_epg_refresh": int(time.time()),
+                        "last_epg_status": "skipped",
+                        "last_epg_skip_reason": "no twitch inputs configured",
+                    })
+                    _save_schedule_state(settings, state)
+                else:
+                    prebuilt = _gather_entries(settings)
+                    sync_result = _run_sync_channels(settings, prebuilt=prebuilt)
+                    epg_result = _run_refresh_epg(settings, prebuilt=prebuilt)
+                    state = _load_schedule_state(settings)
+                    state.update({
+                        "last_epg_refresh": int(time.time()),
+                        "last_epg_status": "ok",
+                        "last_sync_result": sync_result,
+                        "last_epg_result": epg_result,
+                    })
+                    _save_schedule_state(settings, state)
             except Exception as e:
                 logger.exception("Scheduled Twitcharr refresh failed")
                 state = _load_schedule_state(settings)
@@ -788,11 +1116,29 @@ def _run_scheduled_tick() -> None:
     if _update_check_due(settings, state, now):
         try:
             check = _run_check_updates(settings)
+            apply_result = None
+            latest_version = check.get("latest_version")
+            previous_auto = state.get("auto_update_result") or {}
+            already_applied = (
+                previous_auto.get("applied")
+                and latest_version
+                and previous_auto.get("latest_version") == latest_version
+            )
+            if (
+                check.get("status") == "ok"
+                and check.get("update_available")
+                and _auto_apply_updates_enabled(settings)
+                and not already_applied
+            ):
+                apply_result = _run_apply_update(settings)
             state = _load_schedule_state(settings)
             state.update({
                 "last_update_check": int(time.time()),
                 "update_check": check,
             })
+            if apply_result is not None:
+                state["last_auto_update"] = int(time.time())
+                state["auto_update_result"] = apply_result
             _save_schedule_state(settings, state)
         except Exception:
             logger.exception("Periodic update check failed (non-fatal)")
@@ -875,12 +1221,11 @@ def _disable_schedule() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = "1.0.0"
+    version = str(_MANIFEST.get("version") or "1.2.1")
     description = (
-        "One-click Twitch live-TV lineup for Dispatcharr. Type Twitch logins or discovery "
-        "tokens (top:de:25, game:Just Chatting:10, search:gronkh) and the plugin auto-creates "
-        "low-latency channels, a fresh XMLTV guide, and triggers Emby/Jellyfin guide refreshes "
-        "after every cycle. Self-updating."
+        "Twitch live-TV lineup for Dispatcharr. Add channel names by comma or line break, "
+        "optionally use discovery tokens, and sync Channels plus XMLTV guide data "
+        "without Twitch OAuth credentials or account login."
     )
     author = "eliasbruno124"
     help_url = GITHUB_REPO_URL
@@ -890,13 +1235,13 @@ class Plugin:
 
     def __init__(self):
         try:
-            if _load_settings().get("schedule_enabled"):
+            if _bool_setting(_load_settings(), "schedule_enabled", True):
                 _start_scheduler()
         except Exception:
             logger.exception("Could not start persisted Twitcharr scheduler")
 
     def run(self, action: str, params: dict, context: dict):
-        settings = (context or {}).get("settings") or {}
+        settings = _merge_defaults((context or {}).get("settings") or {})
         plugin_logger = (context or {}).get("logger") or logger
         params = params or {}
 
@@ -915,6 +1260,8 @@ class Plugin:
                 return _run_refresh_media_server(settings)
             if action == "measure_bandwidth":
                 return _run_measure_bandwidth(settings)
+            if action in {"test_connection", "test_media_server_connection"}:
+                return _run_test_connection(settings)
             if action == "status":
                 return _run_status(settings)
             if action == "test_proxies":
