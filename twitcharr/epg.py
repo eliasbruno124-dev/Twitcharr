@@ -46,7 +46,7 @@ def live_preview_url(login: str, *, width: int = 640, height: int = 360, cache_b
 def _viewer_label(viewer_count: int) -> str:
     if not viewer_count:
         return ""
-    return f"{viewer_count:,} Zuschauer".replace(",", ".")
+    return f"{viewer_count:,} viewers"
 
 
 def _format_uptime(started_iso: str, now: datetime) -> str:
@@ -177,7 +177,7 @@ def build_entries(
             if stream_title:
                 description_parts.append(stream_title)
             if uptime_str:
-                description_parts.append(f"Live seit {uptime_str}")
+                description_parts.append(f"Live for {uptime_str}")
             description_parts.append(f"https://twitch.tv/{login}")
             description = "\n".join(description_parts)
             started_at = s.started_at

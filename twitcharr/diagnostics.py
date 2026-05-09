@@ -115,7 +115,7 @@ def check_streamlink() -> dict:
     if not path:
         return {
             "status": "missing",
-            "message": "streamlink binary not on PATH — install it inside the Dispatcharr container",
+            "message": "streamlink not on PATH. Install it inside the Dispatcharr container.",
         }
     return {"status": "ok", "path": path}
 

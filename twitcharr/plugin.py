@@ -32,20 +32,20 @@ GITHUB_REPO = "eliasbruno124-dev/Dispatcharr-Twitch-EPG"
 GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}"
 DONATE_URL = "https://paypal.me/eliasbruno124"
 
-# Bundled offline tile. Full-bleed deep-violet background with a pixel-style
-# game controller (D-pad + 4 face buttons) on a Twitch-purple body and a bold
-# OFFLINE wordmark — the twitch2tuner-flavored "no stream" placeholder. Kept
-# under the 500-char limit Dispatcharr enforces on EPG icon URLs.
+# Bundled offline tile. Pixel-block CRT TV silhouette in Twitch purple over a
+# near-black background, with a bold OFFLINE wordmark filling the screen — the
+# "no signal" placeholder used for offline Twitch channels and for the global
+# placeholder row. Kept under the 500-char limit Dispatcharr enforces on EPG
+# icon URLs.
 _BUILTIN_OFFLINE_ICON_DATA_URL = (
     "data:image/svg+xml,"
     "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 360'%3E"
-    "%3Crect width='640' height='360' fill='%231a0d33'/%3E"
-    "%3Crect x='195' y='125' width='250' height='90' rx='22' fill='%239146ff'/%3E"
-    "%3Cg fill='%23fff'%3E"
-    "%3Cpath d='M230 165h30v10h-30M240 155h10v30h-10'/%3E"
-    "%3Cpath d='M388 162h12v12h-12M408 162h12v12h-12M388 180h12v12h-12M408 180h12v12h-12'/%3E"
-    "%3Ctext x='320' y='285' font-size='46' font-weight='900' text-anchor='middle'%3EOFFLINE%3C/text%3E"
-    "%3C/g%3E%3C/svg%3E"
+    "%3Crect width='640' height='360' fill='%2318181b'/%3E"
+    "%3Crect x='90' y='60' width='460' height='220' fill='%239146ff'/%3E"
+    "%3Crect x='106' y='76' width='428' height='188' fill='%230e0e10'/%3E"
+    "%3Crect x='280' y='284' width='80' height='12' fill='%239146ff'/%3E"
+    "%3Ctext x='320' y='205' text-anchor='middle' fill='%23fff' font-size='90' font-weight='900'%3EOFFLINE%3C/text%3E"
+    "%3C/svg%3E"
 )
 DEFAULT_OFFLINE_ICON_URL = _BUILTIN_OFFLINE_ICON_DATA_URL
 
@@ -63,7 +63,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "include_offline": True,
     "use_profile_pic_when_just_chatting": True,
     "epg_refresh_interval_minutes": 2,
-    "ttvlol_update_time": "04:30",
     "ttvlol_proxy_servers": DEFAULT_TTVLOL_PROXY_SERVERS,
     "stream_quality": "adaptive",
     "connection_bandwidth_mbps": 0,
@@ -365,9 +364,9 @@ def _run_update_ttvlol(settings: dict, *, force: bool = False) -> dict:
     return {
         "status": "ok",
         "message": (
-            f"streamlink-ttvlol updated ({result.bytes_written} bytes)."
+            f"ttv.lol updated ({result.bytes_written} bytes)."
             if result.updated
-            else f"streamlink-ttvlol checked: {result.skipped_reason or 'already current'}."
+            else f"ttv.lol already current ({result.skipped_reason or 'no change'})."
         ),
         "updated": result.updated,
         "release_tag": result.release_tag,
@@ -409,22 +408,21 @@ def _run_check_ttvlol(settings: dict) -> dict:
         fetch_error = str(exc)
 
     if not installed:
-        message = "streamlink-ttvlol is not installed yet — press 'Force-update ttv.lol' to download it."
+        message = "ttv.lol is not installed. Press 'Force update ttv.lol' to download it."
         update_available = True
     elif fetch_error:
-        message = f"Could not reach GitHub to check ttv.lol ({fetch_error}). Local version: {current_tag or 'unknown'}."
+        message = f"Cannot reach GitHub ({fetch_error}). Local: {current_tag or 'unknown'}."
         update_available = False
     elif not latest_tag:
-        message = f"GitHub did not return a release tag. Local version: {current_tag or 'unknown'}."
+        message = f"GitHub returned no tag. Local: {current_tag or 'unknown'}."
         update_available = False
     elif current_tag and current_tag == latest_tag:
-        message = f"streamlink-ttvlol is up to date (tag {current_tag})."
+        message = f"ttv.lol is up to date ({current_tag})."
         update_available = False
     else:
         message = (
-            f"A newer streamlink-ttvlol release is available "
-            f"(local: {current_tag or 'unknown'} → latest: {latest_tag}). "
-            f"Press 'Force-update ttv.lol' to apply it."
+            f"ttv.lol update available: {current_tag or 'unknown'} → {latest_tag}. "
+            f"Press 'Force update ttv.lol' to apply."
         )
         update_available = True
 
@@ -452,9 +450,9 @@ def _run_refresh_epg(settings: dict, *, prebuilt=None) -> dict:
         client, logins, entries = prebuilt
 
     if not logins:
-        return {"status": "error", "message": "No Twitch channel names configured"}
+        return {"status": "error", "message": "No Twitch channels configured."}
     if not entries and not getattr(client, "_users", {}):
-        return {"status": "error", "message": "No matching Twitch channels found for the configured input"}
+        return {"status": "error", "message": "No matching Twitch channels found."}
 
     write_result = _write_lineup_guide(settings, entries)
 
@@ -494,15 +492,13 @@ def _run_sync_channels(settings: dict, *, prebuilt=None) -> dict:
     else:
         client, logins, entries = prebuilt
     if not logins:
-        return {"status": "error", "message": "No Twitch channel names configured"}
+        return {"status": "error", "message": "No Twitch channels configured."}
     if not entries and not getattr(client, "_users", {}):
-        return {"status": "error", "message": "No matching Twitch channels found for the configured input"}
+        return {"status": "error", "message": "No matching Twitch channels found."}
     guide_result = _write_lineup_guide(settings, entries)
     result = _sync_channels_from_entries(settings, entries)
     if not entries:
-        result["message"] = (
-            "No configured Twitch channels are live right now. Managed offline channels were pruned."
-        )
+        result["message"] = "Nothing live right now. Offline channels pruned."
     return {
         "status": "ok",
         "channels_synced": len(result.get("channel_names") or []),
@@ -538,7 +534,7 @@ def _run_setup(settings: dict) -> dict:
 
     result: dict[str, Any] = {
         "status": "ok",
-        "message": "Base setup complete. Scheduler is enabled.",
+        "message": "Setup complete. Scheduler running.",
         "data_dir": data_dir,
         "ttvlol_release_tag": ttv_result.release_tag,
         "ttvlol_path": ttv_result.target_path,
@@ -551,23 +547,16 @@ def _run_setup(settings: dict) -> dict:
         prebuilt = _gather_entries(settings)
         client, logins, entries = prebuilt
         if not logins:
-            result["next"] = (
-                "No Twitch channels could be resolved from the configured input. Check the "
-                "channel names / discovery tokens in the channels field."
-            )
+            result["next"] = "Could not resolve any channels. Check the channel names or discovery tokens."
             return result
         result["sync"] = _run_sync_channels(settings, prebuilt=prebuilt)
         result["epg"] = result["sync"].get("guide", {})
         result["media_server_refresh"] = _trigger_media_server(settings)
         result["discord_notifications"] = _trigger_discord_go_live(settings, entries)
-        result["message"] = "Setup complete: channels, guide, scheduler and integrations were refreshed."
-        result["next"] = "Done. Channels, guide and the auto-updater are active."
+        result["message"] = "Setup complete. Channels, guide and integrations refreshed."
+        result["next"] = "Channels, guide and auto-updater are active."
     else:
-        result["next"] = (
-            "Base setup is done and the daily ttv.lol updater is active. Add Twitch channel names "
-            "(or a discovery token like 'top:de:25'), then run setup again or wait for the "
-            "next automatic refresh."
-        )
+        result["next"] = "Add Twitch channels (or a discovery token), then sync again."
     return result
 
 
@@ -606,7 +595,7 @@ def _run_all(settings: dict) -> dict:
 
     has_error = any(s.get("status") == "error" for s in out["steps"].values())
     out["status"] = "partial" if has_error else "ok"
-    out["message"] = "Full refresh finished." if not has_error else "Full refresh finished with errors."
+    out["message"] = "Full refresh done." if not has_error else "Full refresh finished with errors."
     return out
 
 
@@ -667,7 +656,7 @@ def _run_refresh_media_server(settings: dict) -> dict:
     trigger = _trigger_media_server(settings)
     return {
         "status": trigger.get("status", "ok"),
-        "message": trigger.get("message", "Media-server refresh checked."),
+        "message": trigger.get("message", "Media server checked."),
         "media_server_status": trigger.get("status"),
         "task_id": trigger.get("task_id"),
         "task_name": trigger.get("task_name"),
@@ -720,14 +709,6 @@ def _validate_settings(settings: dict) -> dict:
     if margin != _int_setting(settings, "bandwidth_safety_margin_pct", 50):
         warnings.append("Bandwidth safety margin is clamped to the supported 0-200% range.")
 
-    time_raw = _text_setting(settings, "ttvlol_update_time", "04:30", fallback_on_empty=True)
-    try:
-        hour, minute = [int(part) for part in time_raw.split(":", 1)]
-        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-            raise ValueError
-    except Exception:
-        warnings.append("Daily ttv.lol update time should be HH:MM, for example 04:30.")
-
     proxy_servers = _proxy_servers(settings)
     for url in [u.strip() for u in proxy_servers.split(",") if u.strip()]:
         if not url.lower().startswith(("http://", "https://")):
@@ -773,15 +754,15 @@ def _run_test_proxies(settings: dict) -> dict:
     total = len(results)
     return {
         "status": "ok" if alive else ("error" if total else "skipped"),
-        "message": f"{alive}/{total} configured ttv.lol proxies reachable",
+        "message": f"{alive}/{total} ttv.lol proxies reachable.",
         "summary": f"{alive}/{total} proxies reachable",
         "reachable": alive,
         "total": total,
         "proxies": results,
         "next": (
-            "Reorder or remove dead proxies in 'ttv.lol proxy servers' to speed up channel switching."
+            "Remove or reorder dead proxies for faster channel switching."
             if alive < total
-            else "All configured proxies are reachable."
+            else "All proxies reachable."
         ),
     }
 
@@ -790,7 +771,7 @@ def _run_test_discord(settings: dict) -> dict:
     """Send a one-off test embed to the Discord webhook."""
     webhook = _text_setting(settings, "discord_webhook_url")
     if not webhook:
-        return {"status": "skipped", "message": "discord_webhook_url is not set"}
+        return {"status": "skipped", "message": "Discord webhook is not set."}
 
     from . import notifications
 
@@ -877,7 +858,7 @@ def _run_measure_bandwidth(settings: dict) -> dict:
         "status": "ok",
         "message": (
             f"Measured {measured_mbps} Mbps. Preferred quality: "
-            f"{description.get('preferred_quality')}; chain: {description.get('fallback_chain')}"
+            f"{description.get('preferred_quality')} (chain: {description.get('fallback_chain')})."
         ),
         **result.as_dict(),
         **description,
@@ -887,9 +868,9 @@ def _run_measure_bandwidth(settings: dict) -> dict:
         **profile_update,
         "active_now": _text_setting(settings, "stream_quality", "adaptive", fallback_on_empty=True) == "adaptive",
         "next": (
-            "Measurement saved to 'Connection bandwidth (Mbps)' and the StreamProfile was updated."
+            "Saved to 'Connection bandwidth' and StreamProfile updated."
             if saved_setting and profile_update.get("stream_profile_updated")
-            else "Measurement completed. If settings did not update visually, reload the plugin settings and run Sync channels once."
+            else "Measured. Reload plugin settings and sync once if values look stale."
         ),
     }
 
@@ -919,6 +900,14 @@ def _run_apply_update(settings: dict) -> dict:
         current_version=_current_version(),
         data_dir=_data_dir(settings),
     )
+
+
+def _run_donate() -> dict:
+    return {
+        "status": "ok",
+        "message": f"Thanks for supporting Twitcharr! Donate at {DONATE_URL}",
+        "url": DONATE_URL,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -984,24 +973,18 @@ def _interval_minutes(settings: dict) -> int:
     return _int_setting(settings, "epg_refresh_interval_minutes", 2, min_value=1)
 
 
-def _ttvlol_update_minute(settings: dict) -> int:
-    raw = _text_setting(settings, "ttvlol_update_time")
-    if not raw:
-        cron = (settings.get("ttvlol_update_cron") or "30 4 * * *").strip().split()
-        if len(cron) == 5 and cron[0].isdigit() and cron[1].isdigit():
-            raw = f"{int(cron[1]):02d}:{int(cron[0]):02d}"
-        else:
-            raw = "04:30"
-    try:
-        hour, minute = [int(part) for part in raw.split(":", 1)]
-        return max(0, min(23, hour)) * 60 + max(0, min(59, minute))
-    except Exception:
-        return 4 * 60 + 30
+# ttv.lol updates always run at server-local midnight. The previous user-facing
+# setting was removed for simplicity — there is no good reason to schedule it
+# any other way.
+TTVLOL_UPDATE_MINUTE_OF_DAY = 0
 
 
-def _ttvlol_update_time_label(settings: dict) -> str:
-    minute_of_day = _ttvlol_update_minute(settings)
-    return f"{minute_of_day // 60:02d}:{minute_of_day % 60:02d}"
+def _ttvlol_update_minute(_settings: dict) -> int:
+    return TTVLOL_UPDATE_MINUTE_OF_DAY
+
+
+def _ttvlol_update_time_label(_settings: dict) -> str:
+    return "00:00"
 
 
 def _ttvlol_due(settings: dict, state: dict, now: float) -> bool:
@@ -1201,7 +1184,7 @@ def _ensure_schedule_running() -> dict:
         "scheduler": "running",
         "started_now": started,
         "epg_refresh": f"every {_interval_minutes(merged)} minutes",
-        "ttvlol_update": f"daily at {_ttvlol_update_time_label(merged)} server time",
+        "ttvlol_update": "daily at midnight (server time)",
         **_delete_legacy_celery_tasks(),
     }
 
@@ -1212,14 +1195,14 @@ def _ensure_schedule_running() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = str(_MANIFEST.get("version") or "1.2.3")
+    version = str(_MANIFEST.get("version") or "1.2.7")
     description = (
-        "Twitch live-TV lineup for Dispatcharr. Add channel names by comma or line break, "
-        "optionally use discovery tokens, and sync Channels plus XMLTV guide data "
-        "without Twitch OAuth credentials or account login."
+        "Twitch live-TV lineup for Dispatcharr. Anonymous metadata, Streamlink "
+        "playback, XMLTV guide and channel sync — no Twitch login required."
     )
     author = "eliasbruno124"
     help_url = GITHUB_REPO_URL
+    donate_url = DONATE_URL
 
     fields: list[dict] = _MANIFEST.get("fields", [])
     actions: list[dict] = _MANIFEST.get("actions", [])
@@ -1260,6 +1243,8 @@ class Plugin:
                 return _run_check_updates(settings)
             if action == "apply_update":
                 return _run_apply_update(settings)
+            if action == "donate":
+                return _run_donate()
             if action == "uninstall":
                 from . import streamlink_setup
 

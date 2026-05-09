@@ -126,7 +126,7 @@ def check_for_update(*, current_version: str, data_dir: str) -> dict[str, Any]:
         "message": (
             f"Update available: {latest}."
             if available
-            else f"No plugin update available (current {_normalize(current_version)}, latest {latest or 'unknown'})."
+            else f"Up to date (current {_normalize(current_version)}, latest {latest or 'unknown'})."
         ),
         "current_version": _normalize(current_version),
         "latest_version": latest,
@@ -174,7 +174,7 @@ def apply_update(*, current_version: str, data_dir: str) -> dict[str, Any]:
         return {
             "status": "ok",
             "applied": False,
-            "message": f"Already on {_normalize(current_version)} (latest {latest}).",
+            "message": f"Already on the latest version ({_normalize(current_version)}).",
             "latest_version": latest,
             "current_version": _normalize(current_version),
         }
@@ -227,12 +227,9 @@ def apply_update(*, current_version: str, data_dir: str) -> dict[str, Any]:
     return {
         "status": "ok",
         "applied": True,
-        "message": f"Plugin update applied: {_normalize(current_version)} -> {latest or 'main'}. Reload plugins or restart Dispatcharr.",
+        "message": f"Updated {_normalize(current_version)} → {latest or 'main'}. Reload plugins to apply.",
         "files_written": files_written,
         "latest_version": latest,
         "previous_version": _normalize(current_version),
-        "next": (
-            "Update applied. Reload Dispatcharr's plugin list (or restart the container) "
-            "for the new code to take effect."
-        ),
+        "next": "Reload Dispatcharr's plugin list (or restart the container) for the new code to load.",
     }

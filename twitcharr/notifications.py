@@ -31,13 +31,13 @@ def go_live_embed(entry: dict) -> dict[str, Any]:
     title_text = ""
 
     # entry["description"] starts with the actual stream title (newline-separated
-    # from the supplemental "Spielt: ..." / viewers lines added in epg.build_entries).
+    # from the supplemental "Playing: ..." / viewers lines added in epg.build_entries).
     desc = (entry.get("description") or "").strip()
     if desc:
         title_text = desc.split("\n", 1)[0].strip()
 
     embed: dict[str, Any] = {
-        "title": f"🔴 {display_name} ist jetzt live!",
+        "title": f"🔴 {display_name} is now live!",
         "url": f"https://twitch.tv/{login}",
         "color": TWITCH_PURPLE,
         "timestamp": entry.get("started_at") or None,
@@ -47,11 +47,11 @@ def go_live_embed(entry: dict) -> dict[str, Any]:
     if title_text:
         embed["description"] = title_text[:400]
     if game_name:
-        embed["fields"].append({"name": "Spielt", "value": game_name, "inline": True})
+        embed["fields"].append({"name": "Playing", "value": game_name, "inline": True})
     if viewers:
         embed["fields"].append({
-            "name": "Zuschauer",
-            "value": f"{viewers:,}".replace(",", "."),
+            "name": "Viewers",
+            "value": f"{viewers:,}",
             "inline": True,
         })
     if entry.get("profile_image_url"):
