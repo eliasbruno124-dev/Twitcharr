@@ -1,11 +1,9 @@
 {
   "name": "Twitcharr",
-  "version": "1.2.7",
+  "version": "1.2.10",
   "description": "Twitch live-TV lineup for Dispatcharr. Add channel names by comma or line break, optionally use discovery tokens, and sync Channels, Streams and the XMLTV guide. Anonymous Twitch metadata only — no OAuth, Client ID/Secret or Twitch login.",
   "author": "eliasbruno124",
   "help_url": "https://github.com/eliasbruno124-dev/Dispatcharr-Twitch-EPG",
-  "donate_url": "https://paypal.me/eliasbruno124",
-  "funding_url": "https://paypal.me/eliasbruno124",
   "fields": [
     {
       "id": "channels",
@@ -92,28 +90,21 @@
       "label": "Show offline channels",
       "type": "boolean",
       "default": true,
-      "description": "ON: keep offline streamers visible while at least one Twitch channel is live. OFF: remove offline streamers and re-add them when they go live."
+      "description": "ON: keep offline streamers visible with the bundled offline card. OFF: remove offline streamers and re-add them when they go live."
     },
     {
       "id": "keep_placeholder",
       "label": "Always keep a 'no streams online' channel",
       "type": "boolean",
       "default": true,
-      "description": "Keeps one placeholder channel when nobody is live so Live TV is never empty."
-    },
-    {
-      "id": "use_live_thumbnails",
-      "label": "Use live preview as channel icon",
-      "type": "boolean",
-      "default": false,
-      "description": "ON: Twitch live preview as the channel icon. OFF: game art or profile picture."
+      "description": "Keeps one placeholder only when offline channels are hidden and no live stream is available."
     },
     {
       "id": "use_profile_pic_when_just_chatting",
       "label": "Profile picture for Just Chatting",
       "type": "boolean",
       "default": true,
-      "description": "Used only when live previews are OFF. Shows the profile picture for Just Chatting streams."
+      "description": "Shows the profile picture instead of category artwork for Just Chatting streams."
     },
     {
       "id": "epg_refresh_interval_minutes",
@@ -147,14 +138,6 @@
       "description": "Required when an Emby/Jellyfin URL is set. Not a Twitch token."
     },
     {
-      "id": "discord_webhook_url",
-      "label": "Discord webhook for go-live alerts",
-      "type": "text",
-      "default": "",
-      "placeholder": "https://discord.com/api/webhooks/.../...",
-      "description": "Optional. Posts a Discord embed when a configured streamer goes live."
-    },
-    {
       "id": "auto_check_updates",
       "label": "Auto-check for plugin updates",
       "type": "boolean",
@@ -186,118 +169,27 @@
       "button_color": "blue"
     },
     {
-      "id": "refresh_epg",
-      "label": "Refresh guide",
-      "description": "Refresh Twitch status, write XMLTV and Dispatcharr EPG rows.",
-      "button_label": "Refresh guide",
-      "button_variant": "filled",
-      "button_color": "green"
-    },
-    {
-      "id": "sync_channels",
-      "label": "Sync channels",
-      "description": "Write the current guide, then create, update or remove managed Channels and Streams.",
-      "button_label": "Sync channels",
-      "button_variant": "outline",
-      "button_color": "blue"
-    },
-    {
-      "id": "run_all",
-      "label": "Full refresh",
-      "description": "ttv.lol check, channel sync and guide refresh in one pass.",
-      "button_label": "Full refresh",
-      "button_variant": "outline",
-      "button_color": "green"
-    },
-    {
       "id": "measure_bandwidth",
       "label": "Measure bandwidth",
       "description": "Run quick Cloudflare probes, save the Mbps value and update the adaptive profile.",
       "button_label": "Measure bandwidth",
       "button_variant": "filled",
-      "button_color": "teal"
-    },
-    {
-      "id": "test_proxies",
-      "label": "Test proxies",
-      "description": "Probe every configured ttv.lol proxy URL and report HTTP code and latency.",
-      "button_label": "Test proxies",
-      "button_variant": "outline",
-      "button_color": "indigo"
-    },
-    {
-      "id": "test_discord",
-      "label": "Test Discord webhook",
-      "description": "Send one test embed to the configured Discord webhook.",
-      "button_label": "Test Discord",
-      "button_variant": "outline",
-      "button_color": "pink"
-    },
-    {
-      "id": "refresh_media_server",
-      "label": "Refresh Emby / Jellyfin",
-      "description": "Trigger the Refresh Guide task on the configured Emby or Jellyfin server.",
-      "button_label": "Refresh media server",
-      "button_variant": "outline",
-      "button_color": "violet"
+      "button_color": "blue"
     },
     {
       "id": "check_ttvlol",
-      "label": "ttv.lol — check / force update",
-      "description": "Check for a new ttv.lol release. Use 'Force update ttv.lol' on the right to redownload right away.",
-      "button_label": "Check ttv.lol",
-      "button_variant": "outline",
-      "button_color": "orange"
-    },
-    {
-      "id": "update_ttvlol",
-      "label": "ttv.lol — check / force update",
-      "description": "Force-redownload the latest ttv.lol twitch.py regardless of cache. Use 'Check ttv.lol' on the left first.",
-      "button_label": "Force update ttv.lol",
+      "label": "ttv.lol update",
+      "description": "Check the installed ttv.lol release and redownload the latest twitch.py in one pass.",
+      "button_label": "Check / update ttv.lol",
       "button_variant": "filled",
-      "button_color": "orange",
-      "confirm": {
-        "required": true,
-        "title": "Force-update ttv.lol?",
-        "message": "Redownloads the latest ttv.lol twitch.py even if the cached ETag matches."
-      }
-    },
-    {
-      "id": "check_updates",
-      "label": "Plugin — check / apply update",
-      "description": "Check GitHub Releases for a newer Twitcharr version.",
-      "button_label": "Check for update",
-      "button_variant": "outline",
-      "button_color": "cyan"
-    },
-    {
-      "id": "apply_update",
-      "label": "Plugin — check / apply update",
-      "description": "Download the latest release and replace the plugin code. Reload plugins afterwards.",
-      "button_label": "Apply update",
-      "button_variant": "filled",
-      "button_color": "cyan",
-      "confirm": {
-        "required": true,
-        "title": "Update Twitcharr from GitHub?",
-        "message": "Downloads the latest release and overwrites the plugin code. Settings, XMLTV and the cached ttv.lol plugin are kept."
-      }
-    },
-    {
-      "id": "donate",
-      "label": "Donate via PayPal",
-      "description": "Support Twitcharr development via PayPal. Thank you!",
-      "button_label": "Donate via PayPal",
-      "button_variant": "outline",
-      "button_color": "yellow",
-      "url": "https://paypal.me/eliasbruno124"
+      "button_color": "blue"
     },
     {
       "id": "uninstall",
       "label": "Uninstall",
-      "description": "Remove managed StreamProfile, EPG source, Channels and Streams. Plugin files and settings stay.",
+      "description": "Remove managed objects, clear the XMLTV file and trigger an Emby/Jellyfin guide refresh.",
       "button_label": "Uninstall",
-      "button_variant": "outline",
+      "button_variant": "filled",
       "button_color": "red",
       "confirm": {
         "required": true,

@@ -1,9 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360" role="img" aria-label="Twitcharr offline">
-  <rect width="640" height="360" fill="#18181b"/>
-  <rect x="90" y="60" width="460" height="220" fill="#9146ff"/>
-  <rect x="106" y="76" width="428" height="188" fill="#0e0e10"/>
-  <rect x="280" y="284" width="80" height="12" fill="#9146ff"/>
-  <text x="320" y="205" text-anchor="middle" fill="#ffffff"
-        font-family="'Courier New', ui-monospace, monospace"
-        font-size="90" font-weight="900" letter-spacing="2">OFFLINE</text>
-</svg>
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 360'><rect width='640' height='360' fill='#111014'/><text x='320' y='150' text-anchor='middle' fill='#fff' font-size='76' font-weight='900'>OFF</text><text x='320' y='226' text-anchor='middle' fill='#9146ff' font-size='76' font-weight='900'>LINE</text></svg>

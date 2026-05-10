@@ -14,13 +14,12 @@ Important: Twitcharr can download and use the third-party [`streamlink-ttvlol`](
 | Discovery tokens | Supports `top`, `top:de:25`, `game:Just Chatting:10` and `search:gronkh`. |
 | Dispatcharr objects | Creates and updates managed Channels, Streams, StreamProfile and EPG rows. |
 | XMLTV | Writes `<data_dir>/twitch.xmltv`. |
-| Offline handling | Can keep offline channels, remove offline channels, or keep one placeholder when nobody is live. |
-| Offline icon | Includes a built-in Twitcharr offline card. |
+| Offline handling | Can keep offline channels with the bundled offline card, remove offline channels, or keep one placeholder when the lineup is empty. |
+| Offline icon | Includes a bundled offline card from `twitcharr/assets/offline.svg`. |
 | Adaptive quality | Measures bandwidth and updates the Streamlink quality fallback chain. |
 | ttv.lol update | Downloads the latest `twitch.py` for Streamlink when requested or scheduled. |
 | Emby / Jellyfin | Triggers the server's Refresh Guide task after scheduled EPG refreshes if URL and media-server token are configured. |
-| Discord | Can send go-live webhook notifications. |
-| Diagnostics | Includes status, connection, proxy and bandwidth checks. |
+| Diagnostics | Includes connection, proxy and bandwidth checks. |
 
 Built-in offline card:
 
@@ -120,16 +119,14 @@ Guide detail screenshot:
 | Stream quality | `adaptive` | Builds a Streamlink quality fallback chain from measured or manual bandwidth. |
 | Connection bandwidth (Mbps) | `0` | `0` uses the last measured value or a conservative fallback. |
 | Bandwidth safety margin (%) | `50` | Extra headroom used by adaptive quality. |
-| Show offline channels | on | Keeps offline streamers in the lineup. Turn off to prune them while offline. |
-| Offline channel icon | default HTTPS card | Image used for offline channels and the placeholder. Enter `none` to disable. |
-| Live preview thumbnails | off | Uses stable game/profile artwork by default. Turn on only if you want Twitch preview frames as icons. |
-| Always keep no-streams placeholder | on | Keeps one placeholder channel when nobody is live. |
+| Show offline channels | on | Keeps offline streamers in the lineup with the bundled offline card. Turn off to prune them while offline. |
+| Offline card | bundled SVG | Image used for offline channels and the placeholder. Source: `twitcharr/assets/offline.svg`. |
+| Always keep no-streams placeholder | on | Keeps one placeholder channel only when the lineup would otherwise be empty. |
 | EPG refresh interval | `2` minutes | Scheduler interval for Twitch status and guide refresh. |
-| Daily ttv.lol update time | `04:30` | Scheduler time for the daily forced `twitch.py` refresh. |
+| Daily ttv.lol update time | `00:00` | Scheduler time for the daily forced `twitch.py` refresh. |
 | ttv.lol proxy servers | EU defaults | Comma-separated proxy playlist URLs. Clear to disable. |
 | Emby / Jellyfin URL | empty | Optional media-server base URL. |
 | Emby / Jellyfin access token | empty | Optional media-server token for Emby/Jellyfin only. This is not a Twitch key. |
-| Discord webhook | empty | Optional go-live webhook. |
 | Auto-check for plugin updates | on | Checks GitHub Releases every 6 hours. |
 | Auto-apply plugin updates | on | Applies newer GitHub Releases automatically; reload/restart Dispatcharr afterwards. |
 | Data directory | `/app/data/plugins/twitcharr` | Stores XMLTV, state and the downloaded Streamlink plugin. |
@@ -143,20 +140,9 @@ Quality settings screenshot:
 | Action | Use it for |
 |---|---|
 | Sync now | Full setup and refresh. |
-| Refresh guide | Refresh Twitch status, XMLTV and EPG rows. |
-| Sync channels | Writes current guide rows first, then creates, updates or prunes Channels and Streams. |
-| Full refresh | ttv.lol check, channel sync and guide refresh. |
-| Show status | Full health report. |
-| Test connection | Settings validation, anonymous Twitch check, optional Emby/Jellyfin check and Streamlink check. |
-| Test proxies | Proxy HTTP status and latency. |
-| Send Discord test | Sends one test webhook embed. |
 | Measure bandwidth | Runs quick download probes, saves Mbps and updates adaptive quality. |
-| Refresh media server | Triggers Emby/Jellyfin Refresh Guide. |
-| Update ttv.lol | Forces a fresh `twitch.py` download. |
-| Check for plugin update | Checks GitHub Releases. |
-| Apply plugin update | Downloads and applies the latest release. |
-| Donate via PayPal | Requests the PayPal support page. Dispatcharr currently shows plugin action results as notifications. |
-| Uninstall | Removes managed Dispatcharr objects. Plugin files and settings remain. |
+| Check / update ttv.lol | Checks the installed release and redownloads the latest `twitch.py` in one action. |
+| Uninstall | Removes managed Dispatcharr objects, clears the XMLTV file and triggers a media-server guide refresh. |
 
 Health-check screenshot:
 
@@ -166,12 +152,12 @@ Health-check screenshot:
 
 `Show offline channels` controls real streamer channels:
 
-- ON: offline streamers stay visible with offline guide data while at least one real Twitch channel is live. If nobody is live and the placeholder is enabled, Twitcharr shows only the placeholder.
+- ON: offline streamers stay visible with offline guide data and the bundled offline card, even if nobody is live.
 - OFF: offline streamers are removed during sync and recreated when they go live.
 
 `Always keep no-streams placeholder` controls the placeholder:
 
-- ON: if nobody is live, one placeholder channel remains.
+- ON: if no real streamer entry is in the lineup, one placeholder channel remains.
 - OFF: if nobody is live and offline channels are disabled, all managed Twitch channels are removed.
 
 ## EPG And Images
@@ -183,9 +169,9 @@ Instead it writes guide data where TV clients expect it:
 - Dispatcharr `EPGData` and `ProgramData` rows
 - `<data_dir>/twitch.xmltv`
 - channel icons
-- programme icons in XMLTV when an icon is available
-- rich programme titles with streamer, category and current Twitch viewer count
-- stable game/profile artwork by default; optional cache-busted live preview thumbnails when enabled
+- programme icons in XMLTV with landscape and portrait hints when available
+- programme titles focused on the current stream state, without repeating the channel name in Emby
+- stable game/profile artwork for live channels and the bundled offline card for offline channels
 
 For Emby and Jellyfin, the plugin triggers the server's Refresh Guide task after scheduled EPG refreshes. That is still required because those servers cache Live TV guide data.
 
@@ -193,29 +179,14 @@ For Emby and Jellyfin, the plugin triggers the server's Refresh Guide task after
 
 | Problem | What to try |
 |---|---|
-| No channels appear | Check channel names, then run **Test connection** and **Sync now**. |
+| No channels appear | Check channel names, then run **Sync now**. |
 | OAuth/API-key confusion | Remove Twitch OAuth/API-key text from the channel field. Twitcharr does not need Twitch credentials. |
-| Offline channels do not disappear | Turn **Show offline channels** off, then run **Sync channels**. |
-| Streams do not start | Run **Update ttv.lol** and **Test proxies**. |
+| Offline channels do not disappear | Turn **Show offline channels** off, then run **Sync now**. |
+| Streams do not start | Run **Check / update ttv.lol**. |
 | `streamlink` is missing | Install Streamlink in the Dispatcharr container. |
-| Guide looks stale | Run **Refresh guide**. |
-| Emby/Jellyfin does not update | Set both server URL and media-server token, then run **Test connection**. |
+| Guide looks stale | Run **Sync now**. |
+| Emby/Jellyfin does not update | Set both server URL and media-server token, then run **Sync now**. |
 | Stuttering | Run **Measure bandwidth** or increase the safety margin. |
-| Discord notification missing | Run **Send Discord test**. Go-live alerts only fire on offline-to-live transitions. |
-
-Discord notification screenshot:
-
-![Discord go-live notification](docs/07-discord-notification.png)
-
-Self-update screenshot:
-
-![Self-update flow](docs/08-self-update.png)
-
-## Donate
-
-[![Donate with PayPal](https://www.paypalobjects.com/en_US/i/btn/btn_donate_LG.gif)](https://paypal.me/eliasbruno124)
-
-PayPal: [paypal.me/eliasbruno124](https://paypal.me/eliasbruno124)
 
 ## Sources
 
@@ -225,4 +196,3 @@ PayPal: [paypal.me/eliasbruno124](https://paypal.me/eliasbruno124)
 - [Streamlink plugin sideloading](https://streamlink.github.io/latest/cli/plugin-sideloading.html)
 - [Streamlink Twitch plugin docs](https://streamlink.github.io/latest/cli/plugins/twitch.html)
 - [Jellyfin Scheduled Tasks API](https://api.jellyfin.org/#tag/ScheduledTasks)
-- [Discord webhook docs](https://discord.com/developers/docs/resources/webhook)

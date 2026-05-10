@@ -5,8 +5,8 @@ Combines:
   * a continuously refreshed XMLTV guide (twitch2tuner-style)
   * direct Channel/Stream/EPGData rows in Dispatcharr — no manual M3U/EPG setup
   * Twitch channel discovery (game/top/search) directly inside the lineup field
-  * an always-present "no streams online" placeholder so Emby/Jellyfin Live TV
-    never collapses to an empty section
+  * offline streamer tiles with a bundled offline card, plus a fallback
+    "no streams online" placeholder when the lineup would otherwise be empty
   * Emby/Jellyfin guide refresh on every EPG cycle
   * a built-in self-updater that pulls new releases from GitHub
 """
@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import threading
 import time
 from typing import Any
@@ -30,24 +31,46 @@ logger = logging.getLogger(__name__)
 PLUGIN_KEY = "twitcharr"
 GITHUB_REPO = "eliasbruno124-dev/Dispatcharr-Twitch-EPG"
 GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}"
-DONATE_URL = "https://paypal.me/eliasbruno124"
 
-# Bundled offline tile. Pixel-block CRT TV silhouette in Twitch purple over a
-# near-black background, with a bold OFFLINE wordmark filling the screen — the
-# "no signal" placeholder used for offline Twitch channels and for the global
-# placeholder row. Kept under the 500-char limit Dispatcharr enforces on EPG
-# icon URLs.
-_BUILTIN_OFFLINE_ICON_DATA_URL = (
+# Bundled offline tile used for offline Twitch channels and the global
+# placeholder row. The SVG lives in assets/offline.svg and is encoded as a
+# short data URL so Emby/Jellyfin can fetch it without a separate asset server.
+OFFLINE_ICON_MAX_URL_LENGTH = 500
+_FALLBACK_OFFLINE_ICON_DATA_URL = (
     "data:image/svg+xml,"
     "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 360'%3E"
-    "%3Crect width='640' height='360' fill='%2318181b'/%3E"
-    "%3Crect x='90' y='60' width='460' height='220' fill='%239146ff'/%3E"
-    "%3Crect x='106' y='76' width='428' height='188' fill='%230e0e10'/%3E"
-    "%3Crect x='280' y='284' width='80' height='12' fill='%239146ff'/%3E"
-    "%3Ctext x='320' y='205' text-anchor='middle' fill='%23fff' font-size='90' font-weight='900'%3EOFFLINE%3C/text%3E"
+    "%3Crect width='640' height='360' fill='%23111014'/%3E"
+    "%3Ctext x='320' y='150' text-anchor='middle' fill='%23fff' font-size='76' font-weight='900'%3EOFF%3C/text%3E"
+    "%3Ctext x='320' y='226' text-anchor='middle' fill='%239146ff' font-size='76' font-weight='900'%3ELINE%3C/text%3E"
     "%3C/svg%3E"
 )
-DEFAULT_OFFLINE_ICON_URL = _BUILTIN_OFFLINE_ICON_DATA_URL
+
+
+def _compact_svg_data_url(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as f:
+        svg = f.read()
+    svg = " ".join(svg.replace('"', "'").split())
+    encoded = (
+        svg.replace("%", "%25")
+        .replace("#", "%23")
+        .replace("<", "%3C")
+        .replace(">", "%3E")
+    )
+    return "data:image/svg+xml," + encoded
+
+
+def _load_builtin_offline_icon_url() -> str:
+    try:
+        url = _compact_svg_data_url(os.path.join(os.path.dirname(__file__), "assets", "offline.svg"))
+        if len(url) <= OFFLINE_ICON_MAX_URL_LENGTH:
+            return url
+        logger.warning("Offline SVG data URL is too long (%s chars); using compact fallback", len(url))
+    except Exception:
+        logger.exception("Could not load bundled offline SVG")
+    return _FALLBACK_OFFLINE_ICON_DATA_URL
+
+
+DEFAULT_OFFLINE_ICON_URL = _load_builtin_offline_icon_url()
 
 
 DEFAULT_TTVLOL_PROXY_SERVERS = (
@@ -73,9 +96,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "keep_placeholder": True,
     "auto_check_updates": True,
     "auto_apply_updates": True,
-    "use_live_thumbnails": False,
     "fast_startup": True,
-    "discord_webhook_url": "",
 }
 
 
@@ -164,12 +185,49 @@ def _proxy_servers(settings: dict) -> str:
 
 
 def _offline_icon_url(_settings: dict) -> str:
-    """Always return the bundled offline tile.
+    """Return the bundled offline tile in the fastest form Dispatcharr can serve.
 
-    The user-facing setting that used to override this was removed in v1.2.4
-    so every install ships the same, designed offline card. The argument is
-    kept to preserve the existing call signatures across the codebase.
+    Dispatcharr's logo cache can stream local files whose path starts with
+    /data. Data URLs work in XMLTV, but its logo endpoint treats them as remote
+    URLs, which makes offline channel logos slow or invisible. We therefore
+    copy the bundled SVG into the data volume and use that local file path when
+    possible, with the compact data URL as a final fallback.
     """
+    source = os.path.join(os.path.dirname(__file__), "assets", "offline.svg")
+    candidates: list[str] = []
+    data_dir = _data_dir(_settings)
+    if data_dir:
+        candidates.append(os.path.join(data_dir, "offline.svg"))
+        normalized = data_dir.replace("\\", "/")
+        if normalized.startswith("/app/data/"):
+            candidates.append("/data/" + normalized[len("/app/data/"):] + "/offline.svg")
+        elif normalized == "/app/data":
+            candidates.append("/data/offline.svg")
+        elif normalized.startswith("/data/") or normalized == "/data":
+            candidates.append(os.path.join(data_dir, "offline.svg"))
+        else:
+            candidates.append("/data/plugins/twitcharr/offline.svg")
+
+    seen: set[str] = set()
+    for target in candidates:
+        if not target or target in seen:
+            continue
+        seen.add(target)
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(source, "rb") as f:
+                source_bytes = f.read()
+            target_bytes = b""
+            if os.path.exists(target):
+                with open(target, "rb") as f:
+                    target_bytes = f.read()
+            if source_bytes != target_bytes:
+                shutil.copyfile(source, target)
+            if target.replace("\\", "/").startswith("/data/"):
+                return target.replace("\\", "/")
+        except Exception:
+            logger.debug("Could not prepare offline logo at %s", target, exc_info=True)
+
     return DEFAULT_OFFLINE_ICON_URL
 
 
@@ -278,8 +336,8 @@ def _gather_entries(settings: dict, *, client=None):
     logins = _resolve_logins(settings, client)
     if not logins:
         return client, [], []
-    # Cache-bust the optional live preview URL once per minute so Dispatcharr /
-    # Emby actually re-fetches it instead of serving stale CDN cache.
+    # Keep guide artwork stable: game/profile/offline images are easier for
+    # Emby/Jellyfin to cache and fit predictably across tile layouts.
     cache_bust = int(time.time() // 60)
     entries = epg.build_entries(
         client,
@@ -287,7 +345,7 @@ def _gather_entries(settings: dict, *, client=None):
         use_profile_pic_when_just_chatting=_bool_setting(settings, "use_profile_pic_when_just_chatting", True),
         include_offline=_bool_setting(settings, "include_offline", True),
         offline_icon_url=_offline_icon_url(settings),
-        use_live_thumbnails=_bool_setting(settings, "use_live_thumbnails", False),
+        use_live_thumbnails=False,
         cache_bust=cache_bust,
     )
     return client, logins, entries
@@ -311,8 +369,7 @@ def _write_epg(settings: dict, entries: list[dict]) -> dict:
 
 def _lineup_epg_entries(settings: dict, entries: list[dict]) -> list[dict]:
     """Return the exact guide rows that should exist for the current lineup."""
-    has_live = any(e.get("live") for e in entries)
-    if not has_live and _bool_setting(settings, "keep_placeholder", True):
+    if not entries and _bool_setting(settings, "keep_placeholder", True):
         from . import streamlink_setup
 
         return [streamlink_setup._placeholder_entry(
@@ -376,12 +433,11 @@ def _run_update_ttvlol(settings: dict, *, force: bool = False) -> dict:
     }
 
 
-def _run_check_ttvlol(settings: dict) -> dict:
-    """Quick freshness check for streamlink-ttvlol.
+def _run_check_ttvlol(settings: dict, *, apply_update: bool = False) -> dict:
+    """Freshness check for streamlink-ttvlol, optionally followed by redownload.
 
-    Mirrors the plugin self-updater's check action: hits GitHub for the
-    latest release tag, compares it to the locally cached one, and reports
-    whether the user should force a re-download. Never writes files itself.
+    The UI exposes this as one combined button: check what is installed, then
+    force-redownload the current latest twitch.py when requested.
     """
     from . import ttvlol
 
@@ -408,7 +464,7 @@ def _run_check_ttvlol(settings: dict) -> dict:
         fetch_error = str(exc)
 
     if not installed:
-        message = "ttv.lol is not installed. Press 'Force update ttv.lol' to download it."
+        message = "ttv.lol is not installed."
         update_available = True
     elif fetch_error:
         message = f"Cannot reach GitHub ({fetch_error}). Local: {current_tag or 'unknown'}."
@@ -421,12 +477,11 @@ def _run_check_ttvlol(settings: dict) -> dict:
         update_available = False
     else:
         message = (
-            f"ttv.lol update available: {current_tag or 'unknown'} → {latest_tag}. "
-            f"Press 'Force update ttv.lol' to apply."
+            f"ttv.lol update available: {current_tag or 'unknown'} → {latest_tag}."
         )
         update_available = True
 
-    return {
+    out = {
         "status": "ok",
         "message": message,
         "installed": installed,
@@ -438,6 +493,22 @@ def _run_check_ttvlol(settings: dict) -> dict:
         "path": info.get("path"),
         "fetch_error": fetch_error,
     }
+
+    if apply_update:
+        try:
+            update_result = _run_update_ttvlol(settings, force=True)
+            out["update"] = update_result
+            out["updated"] = update_result.get("updated", False)
+            out["release_tag"] = update_result.get("release_tag") or latest_tag
+            out["path"] = update_result.get("path") or out.get("path")
+            out["message"] = f"{message} {update_result.get('message', '')}".strip()
+        except Exception as exc:
+            logger.exception("ttv.lol combined check/update failed")
+            out["status"] = "error"
+            out["update"] = {"status": "error", "message": str(exc)}
+            out["message"] = f"{message} Update failed: {exc}"
+
+    return out
 
 
 def _run_refresh_epg(settings: dict, *, prebuilt=None) -> dict:
@@ -465,7 +536,6 @@ def _run_refresh_epg(settings: dict, *, prebuilt=None) -> dict:
             logger.exception("Background ttv.lol check failed (non-fatal)")
 
     refresh_status = _trigger_media_server(settings)
-    discord_status = _trigger_discord_go_live(settings, entries)
 
     return {
         "status": "ok",
@@ -479,10 +549,7 @@ def _run_refresh_epg(settings: dict, *, prebuilt=None) -> dict:
         "programmes_written": write_result.get("programmes", 0),
         "media_server_status": refresh_status.get("status"),
         "media_server_message": refresh_status.get("message", ""),
-        "discord_status": discord_status.get("status"),
-        "discord_posted": discord_status.get("posted", 0),
         "media_server_refresh": refresh_status,
-        "discord_notifications": discord_status,
     }
 
 
@@ -498,7 +565,11 @@ def _run_sync_channels(settings: dict, *, prebuilt=None) -> dict:
     guide_result = _write_lineup_guide(settings, entries)
     result = _sync_channels_from_entries(settings, entries)
     if not entries:
-        result["message"] = "Nothing live right now. Offline channels pruned."
+        result["message"] = (
+            "Nothing live right now. Offline channels are hidden; placeholder is active."
+            if result.get("placeholder_active")
+            else "Nothing live right now. Offline channels pruned."
+        )
     return {
         "status": "ok",
         "channels_synced": len(result.get("channel_names") or []),
@@ -552,7 +623,6 @@ def _run_setup(settings: dict) -> dict:
         result["sync"] = _run_sync_channels(settings, prebuilt=prebuilt)
         result["epg"] = result["sync"].get("guide", {})
         result["media_server_refresh"] = _trigger_media_server(settings)
-        result["discord_notifications"] = _trigger_discord_go_live(settings, entries)
         result["message"] = "Setup complete. Channels, guide and integrations refreshed."
         result["next"] = "Channels, guide and auto-updater are active."
     else:
@@ -587,8 +657,6 @@ def _run_all(settings: dict) -> dict:
 
         try:
             out["steps"]["media_server"] = _trigger_media_server(settings)
-            _client, _logins, entries = prebuilt
-            out["steps"]["discord"] = _trigger_discord_go_live(settings, entries)
         except Exception as e:
             logger.exception("post-sync integrations failed")
             out["steps"]["integrations"] = {"status": "error", "message": str(e)}
@@ -602,40 +670,6 @@ def _run_all(settings: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Media server (Emby / Jellyfin) refresh
 # ---------------------------------------------------------------------------
-
-
-def _trigger_discord_go_live(settings: dict, entries: list[dict]) -> dict:
-    """Post a Discord embed for every login that just transitioned to live.
-
-    Compares the current live set against the one persisted in scheduler
-    state from the previous cycle. Updates the persisted set after posting,
-    so subsequent cycles only post genuinely *new* go-lives.
-    """
-    webhook = _text_setting(settings, "discord_webhook_url")
-    if not webhook:
-        return {"status": "skipped", "message": "no webhook configured"}
-
-    state = _load_schedule_state(settings)
-    previously_live: set[str] = set(state.get("previous_live_logins") or [])
-    currently_live: set[str] = {e["login"] for e in entries if e.get("live")}
-    newly_live = currently_live - previously_live
-
-    state["previous_live_logins"] = sorted(currently_live)
-    _save_schedule_state(settings, state)
-
-    if not newly_live:
-        return {"status": "ok", "posted": 0, "newly_live": []}
-
-    new_entries = [e for e in entries if e["login"] in newly_live]
-    try:
-        from . import notifications
-
-        result = notifications.post_go_live(webhook, new_entries)
-        result["newly_live"] = sorted(newly_live)
-        return result
-    except Exception as exc:
-        logger.exception("Discord go-live notification failed")
-        return {"status": "error", "message": str(exc)}
 
 
 def _trigger_media_server(settings: dict) -> dict:
@@ -767,36 +801,6 @@ def _run_test_proxies(settings: dict) -> dict:
     }
 
 
-def _run_test_discord(settings: dict) -> dict:
-    """Send a one-off test embed to the Discord webhook."""
-    webhook = _text_setting(settings, "discord_webhook_url")
-    if not webhook:
-        return {"status": "skipped", "message": "Discord webhook is not set."}
-
-    from . import notifications
-
-    sample = {
-        "login": "twitch",
-        "display_name": "Twitch",
-        "profile_image_url": "https://static-cdn.jtvnw.net/jtv_user_pictures/8a6381c7-d0c0-4576-b179-38bd5ce1d6af-profile_image-300x300.png",
-        "description": "Discord webhook test from Twitcharr",
-        "live": True,
-        "title": "🔴 Twitch • Test",
-        "game_name": "Test",
-        "started_at": "",
-        "viewer_count": 0,
-    }
-    result = notifications.post_go_live(webhook, [sample])
-    return {
-        "message": (
-            f"Discord test sent ({result.get('posted', 0)} embed)."
-            if result.get("status") == "ok"
-            else "Discord test failed."
-        ),
-        **result,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Bandwidth probe (drives the 'adaptive' quality mode)
 # ---------------------------------------------------------------------------
@@ -902,11 +906,39 @@ def _run_apply_update(settings: dict) -> dict:
     )
 
 
-def _run_donate() -> dict:
+def _run_uninstall(settings: dict) -> dict:
+    """Remove managed objects and immediately ask Emby/Jellyfin to rescan."""
+    from . import epg, streamlink_setup
+
+    _stop_scheduler()
+    cleanup = streamlink_setup.uninstall_managed_objects()
+
+    xmltv_result: dict[str, Any]
+    try:
+        xmltv = epg.xmltv_path(_data_dir(settings))
+        channels, programmes = epg.write_xmltv([], xmltv)
+        xmltv_result = {
+            "status": "ok",
+            "xmltv_path": xmltv,
+            "channels": channels,
+            "programmes": programmes,
+        }
+    except Exception as exc:
+        logger.exception("Could not clear Twitcharr XMLTV during uninstall")
+        xmltv_result = {"status": "error", "message": str(exc)}
+
+    media_refresh = _trigger_media_server(settings)
+    status = "ok" if media_refresh.get("status") in {"ok", "skipped"} else "partial"
     return {
-        "status": "ok",
-        "message": f"Thanks for supporting Twitcharr! Donate at {DONATE_URL}",
-        "url": DONATE_URL,
+        "status": status,
+        "message": (
+            "Uninstalled Twitcharr objects and triggered media-server guide refresh."
+            if media_refresh.get("status") == "ok"
+            else "Uninstalled Twitcharr objects. Media-server guide refresh was skipped or failed."
+        ),
+        **cleanup,
+        "xmltv_clear": xmltv_result,
+        "media_server_refresh": media_refresh,
     }
 
 
@@ -1073,7 +1105,6 @@ def _run_scheduled_tick() -> None:
                     sync_result = _run_sync_channels(settings, prebuilt=prebuilt)
                     _client, _logins, entries = prebuilt
                     media_result = _trigger_media_server(settings)
-                    discord_result = _trigger_discord_go_live(settings, entries)
                     state = _load_schedule_state(settings)
                     state.update({
                         "last_epg_refresh": int(time.time()),
@@ -1081,7 +1112,6 @@ def _run_scheduled_tick() -> None:
                         "last_sync_result": sync_result,
                         "last_epg_result": sync_result.get("guide", {}),
                         "last_media_server_refresh": media_result,
-                        "last_discord_result": discord_result,
                     })
                     _save_schedule_state(settings, state)
             except Exception as e:
@@ -1195,14 +1225,13 @@ def _ensure_schedule_running() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = str(_MANIFEST.get("version") or "1.2.7")
+    version = str(_MANIFEST.get("version") or "1.2.10")
     description = (
         "Twitch live-TV lineup for Dispatcharr. Anonymous metadata, Streamlink "
         "playback, XMLTV guide and channel sync — no Twitch login required."
     )
     author = "eliasbruno124"
     help_url = GITHUB_REPO_URL
-    donate_url = DONATE_URL
 
     fields: list[dict] = _MANIFEST.get("fields", [])
     actions: list[dict] = _MANIFEST.get("actions", [])
@@ -1226,7 +1255,7 @@ class Plugin:
             if action == "refresh_epg":
                 return _run_refresh_epg(settings)
             if action == "check_ttvlol":
-                return _run_check_ttvlol(settings)
+                return _run_check_ttvlol(settings, apply_update=True)
             if action == "update_ttvlol":
                 return _run_update_ttvlol(settings, force=bool(params.get("force", True)))
             if action == "run_all":
@@ -1237,19 +1266,12 @@ class Plugin:
                 return _run_measure_bandwidth(settings)
             if action == "test_proxies":
                 return _run_test_proxies(settings)
-            if action == "test_discord":
-                return _run_test_discord(settings)
             if action == "check_updates":
                 return _run_check_updates(settings)
             if action == "apply_update":
                 return _run_apply_update(settings)
-            if action == "donate":
-                return _run_donate()
             if action == "uninstall":
-                from . import streamlink_setup
-
-                _stop_scheduler()
-                return {"status": "ok", **streamlink_setup.uninstall_managed_objects()}
+                return _run_uninstall(settings)
             return {"status": "error", "message": f"Unknown action: {action}"}
         except Exception as e:
             plugin_logger.exception("Action %s failed", action)

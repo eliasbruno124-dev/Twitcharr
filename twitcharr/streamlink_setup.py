@@ -207,6 +207,7 @@ def _placeholder_entry(*, offline_icon_url: str = "") -> dict:
         "description": "Currently no streams online. Channels will appear automatically when streamers go live.",
         "live": False,
         "title": "⚫ No stream online",
+        "sub_title": "",
         "game_name": "",
         "started_at": "",
         "viewer_count": 0,
@@ -258,25 +259,21 @@ def sync_channels(
     synced_logins: list[str] = []
     synced_tvg_ids: set[str] = set()
 
-    # Decide whether to inject the placeholder. We add it whenever:
-    #   * the user wants it AND
-    #   * there are no live channels right now (real-life lineup might be empty).
-    #
-    # When the placeholder is active we also drop the offline entries so the
-    # lineup shows ONLY the "no streams online" tile — otherwise users see
-    # both the placeholder and one greyed-out tile per offline streamer.
+    # Only inject the placeholder when there are no entries left at all. If
+    # offline channels are enabled, those streamer tiles stay visible with the
+    # bundled offline artwork even when nobody is currently live.
     has_live = any(e.get("live") for e in entries)
-    if keep_placeholder and not has_live:
+    placeholder_active = keep_placeholder and not entries
+    if placeholder_active:
         real_entries = [_placeholder_entry(offline_icon_url=offline_icon_url)]
     else:
         real_entries = list(entries)
-        # Defensive cleanup: when at least one real stream is live, eagerly
+        # Defensive cleanup: when real streamer tiles are visible, eagerly
         # tear down any leftover placeholder Channel / Stream / EPGData /
         # ProgramData rows BEFORE we create real ones. Otherwise a stale
-        # placeholder from a previous "nobody live" cycle could survive long
-        # enough for the UI to render a freshly-added live channel under the
-        # "⚫ No stream online" programme.
-        if has_live:
+        # placeholder from a previous empty cycle could survive long enough
+        # for the UI to render real channels under the placeholder programme.
+        if real_entries:
             try:
                 Channel.objects.filter(tvg_id=PLACEHOLDER_TVG_ID).delete()
                 Stream.objects.filter(
@@ -308,6 +305,30 @@ def sync_channels(
     except Exception:
         logger.exception("Could not prefetch EPGData rows; channels will be linked after creation")
 
+    logo_by_url: dict[str, "object"] = {}
+    logos_prefetched = False
+    try:
+        from apps.channels.models import Logo
+
+        logo_names = {
+            e["icon_url"]: f"Twitch: {e.get('channel_name') or e.get('display_name') or e['login']}"
+            for e in real_entries
+            if e.get("icon_url")
+        }
+        if logo_names:
+            logo_by_url = {row.url: row for row in Logo.objects.filter(url__in=logo_names.keys())}
+            missing = [
+                Logo(url=url, name=name)
+                for url, name in logo_names.items()
+                if url not in logo_by_url
+            ]
+            if missing:
+                Logo.objects.bulk_create(missing, ignore_conflicts=True, batch_size=500)
+                logo_by_url = {row.url: row for row in Logo.objects.filter(url__in=logo_names.keys())}
+        logos_prefetched = True
+    except Exception:
+        logger.exception("Could not prefetch Logo rows; falling back to per-channel logo upserts")
+
     for idx, e in enumerate(real_entries):
         login = e["login"]
         tvg = channel_tvg_id(login)
@@ -320,7 +341,7 @@ def sync_channels(
             if is_placeholder
             else f"https://twitch.tv/{login}"
         )
-        logo = _logo_for(login, channel_name, e["icon_url"])
+        logo = logo_by_url.get(e["icon_url"]) if logos_prefetched else _logo_for(login, channel_name, e["icon_url"])
 
         stream_defaults = {
             "name": channel_name,
@@ -383,7 +404,9 @@ def sync_channels(
     return {
         "message": (
             "No Twitch streams are live; placeholder channel is active."
-            if keep_placeholder and not has_live
+            if placeholder_active
+            else f"Synced {len(visible_channel_names)} offline Twitch channels."
+            if not has_live
             else f"Synced {len(visible_channel_names)} Twitch channels."
         ),
         "channels_created": created_channels,
@@ -391,7 +414,7 @@ def sync_channels(
         "channels_pruned": pruned_channels,
         "streams_created": created_streams,
         "streams_pruned": pruned_streams,
-        "placeholder_active": (keep_placeholder and not has_live),
+        "placeholder_active": placeholder_active,
         "channel_names": visible_channel_names,
         "stream_profile_id": profile.id,
         "channel_group_id": group.id,

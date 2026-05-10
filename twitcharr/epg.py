@@ -29,6 +29,9 @@ EPG_SOURCE_NAME = "Twitch (managed by Twitcharr)"
 TVG_ID_PREFIX = "twitch."
 LIVE_PROGRAMME_HOURS = 24
 OFFLINE_PROGRAMME_HOURS = 24
+LANDSCAPE_ICON_SIZE = (320, 180)
+PORTRAIT_ICON_SIZE = (180, 320)
+SQUARE_ICON_SIZE = (300, 300)
 
 # Twitch's CDN preview URL for any live channel. The CDN refreshes the JPEG
 # every ~30s, but downstream caches (Dispatcharr → Emby → browser) hold the URL
@@ -43,10 +46,39 @@ def live_preview_url(login: str, *, width: int = 640, height: int = 360, cache_b
     return url
 
 
+def _icon(src: str, width: int | None = None, height: int | None = None) -> dict:
+    if not src:
+        return {}
+    out = {"src": src}
+    if width and height:
+        out["width"] = str(width)
+        out["height"] = str(height)
+    return out
+
+
+def _dedupe_icons(icons: Iterable[dict]) -> list[dict]:
+    out: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for icon in icons:
+        src = icon.get("src")
+        if not src:
+            continue
+        key = (src, icon.get("width", ""), icon.get("height", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(icon)
+    return out
+
+
+def _entry_icons(entry: dict) -> list[dict]:
+    return _dedupe_icons(entry.get("icons") or [_icon(entry.get("icon_url") or "")])
+
+
 def _viewer_label(viewer_count: int) -> str:
     if not viewer_count:
         return ""
-    return f"{viewer_count:,} viewers"
+    return f"{viewer_count:,}"
 
 
 def _format_uptime(started_iso: str, now: datetime) -> str:
@@ -108,7 +140,7 @@ def build_entries(
     use_profile_pic_when_just_chatting: bool = True,
     include_offline: bool = True,
     offline_icon_url: str = "",
-    use_live_thumbnails: bool = True,
+    use_live_thumbnails: bool = False,
     cache_bust: int = 0,
 ) -> list[dict]:
     """Returns a list of dicts, one per channel.
@@ -142,53 +174,91 @@ def build_entries(
             game_name = (s.game_name or (game.name if game else "")).strip()
 
             # Icon priority:
-            #   1. Live preview thumbnail (most dynamic, shows what's actually
-            #      on screen) — when `use_live_thumbnails` is on.
+            #   1. Live preview thumbnail (internal option, currently not
+            #      exposed in settings because stable artwork fits TV grids better).
             #   2. Game box art (when not Just Chatting, or that override is off).
             #   3. Profile picture (Just Chatting w/ override, or no game art).
             if use_live_thumbnails:
-                icon_url = live_preview_url(login, cache_bust=cache_bust)
+                icon_url = live_preview_url(
+                    login,
+                    width=LANDSCAPE_ICON_SIZE[0],
+                    height=LANDSCAPE_ICON_SIZE[1],
+                    cache_bust=cache_bust,
+                )
+                icons = _dedupe_icons([
+                    _icon(icon_url, *LANDSCAPE_ICON_SIZE),
+                    _icon(
+                        live_preview_url(
+                            login,
+                            width=PORTRAIT_ICON_SIZE[0],
+                            height=PORTRAIT_ICON_SIZE[1],
+                            cache_bust=cache_bust,
+                        ),
+                        *PORTRAIT_ICON_SIZE,
+                    ),
+                ])
             elif game_name.lower() == "just chatting" and use_profile_pic_when_just_chatting:
                 icon_url = u.profile_image_url
+                icons = _dedupe_icons([_icon(icon_url, *SQUARE_ICON_SIZE)])
             elif game and game.box_art_url:
-                icon_url = tw.render_box_art(game.box_art_url)
+                icon_url = tw.render_box_art(
+                    game.box_art_url,
+                    width=LANDSCAPE_ICON_SIZE[0],
+                    height=LANDSCAPE_ICON_SIZE[1],
+                )
+                icons = _dedupe_icons([
+                    _icon(icon_url, *LANDSCAPE_ICON_SIZE),
+                    _icon(
+                        tw.render_box_art(
+                            game.box_art_url,
+                            width=PORTRAIT_ICON_SIZE[0],
+                            height=PORTRAIT_ICON_SIZE[1],
+                        ),
+                        *PORTRAIT_ICON_SIZE,
+                    ),
+                ])
             else:
                 icon_url = u.profile_image_url
+                icons = _dedupe_icons([_icon(icon_url, *SQUARE_ICON_SIZE)])
 
             stream_title = (s.title or "").strip()
             uptime_str = _format_uptime(s.started_at, datetime.now(timezone.utc))
             viewer_label = _viewer_label(s.viewer_count)
 
-            # Programme title: the at-a-glance line shown in the channel grid.
-            # Streamer + game + viewer count is enough — the description carries
-            # the stream-specific info so the two are never identical.
-            title_parts = [f"🔴 {u.display_name}", game_name or "Live"]
-            if viewer_label:
-                title_parts.append(viewer_label)
-            title = " • ".join(title_parts)
+            # Emby already shows the channel name next to the programme, so the
+            # title stays focused on the current stream and avoids "Name / Name".
+            title = stream_title or game_name or "Live"
+            sub_title = game_name if stream_title and game_name and game_name != stream_title else ""
             channel_name = u.display_name
 
-            # Programme description: the streamer's actual Twitch title plus
-            # uptime and the channel URL. We deliberately do NOT repeat the
-            # game name or viewer count here because those already appear in
-            # the title above — duplicating them made title and description
-            # look identical for streams without a custom title.
+            # Keep one detail per line so clients like Emby do not show a long,
+            # glued-together status sentence in the programme detail view.
             description_parts: list[str] = []
-            if stream_title:
-                description_parts.append(stream_title)
+            if game_name and game_name != title:
+                description_parts.append(f"Category: {game_name}")
+            if viewer_label:
+                description_parts.append(f"Viewers: {viewer_label}")
             if uptime_str:
-                description_parts.append(f"Live for {uptime_str}")
-            description_parts.append(f"https://twitch.tv/{login}")
+                description_parts.append(f"Uptime: {uptime_str}")
+            description_parts.append(f"Link: https://twitch.tv/{login}")
             description = "\n".join(description_parts)
             started_at = s.started_at
             viewers = s.viewer_count
         else:
             # offline_icon_url: empty string -> no image; otherwise use it.
             icon_url = offline_icon if offline_icon else ""
+            icons = _dedupe_icons([
+                _icon(icon_url, *LANDSCAPE_ICON_SIZE),
+                _icon(icon_url, *PORTRAIT_ICON_SIZE),
+            ])
             game_name = ""
-            title = f"⚫ {u.display_name} (offline)"
-            channel_name = f"{u.display_name} (offline)"
-            description = (u.description or "").strip()
+            title = "Offline"
+            sub_title = ""
+            channel_name = u.display_name
+            description_parts = ["Status: Offline", f"Link: https://twitch.tv/{login}"]
+            if (u.description or "").strip():
+                description_parts.append(f"Bio: {(u.description or '').strip()}")
+            description = "\n".join(description_parts)
             stream_title = ""
             viewer_label = ""
             started_at = ""
@@ -200,9 +270,11 @@ def build_entries(
             "channel_name": channel_name,
             "profile_image_url": u.profile_image_url,
             "icon_url": icon_url,
+            "icons": icons,
             "description": description,
             "live": live,
             "title": title,
+            "sub_title": sub_title,
             "stream_title": stream_title,
             "game_name": game_name,
             "started_at": started_at,
@@ -244,11 +316,8 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
         ch = ET.SubElement(tv, "channel", {"id": channel_tvg_id(e["login"])})
         channel_name = e.get("channel_name") or e["display_name"]
         ET.SubElement(ch, "display-name").text = channel_name
-        if channel_name != e["display_name"]:
-            ET.SubElement(ch, "display-name").text = e["display_name"]
-        ET.SubElement(ch, "display-name").text = e["login"]
-        if e["icon_url"]:
-            ET.SubElement(ch, "icon", {"src": e["icon_url"]})
+        for icon in _entry_icons(e):
+            ET.SubElement(ch, "icon", {k: str(v) for k, v in icon.items() if v})
         ET.SubElement(ch, "url").text = f"https://twitch.tv/{e['login']}"
 
     programme_count = 0
@@ -266,8 +335,8 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
             "channel": channel_tvg_id(e["login"]),
         })
         ET.SubElement(prog, "title", {"lang": "en"}).text = e["title"]
-        if e.get("stream_title"):
-            ET.SubElement(prog, "sub-title", {"lang": "en"}).text = e["stream_title"]
+        if e.get("sub_title"):
+            ET.SubElement(prog, "sub-title", {"lang": "en"}).text = e["sub_title"]
         if e["description"]:
             ET.SubElement(prog, "desc", {"lang": "en"}).text = e["description"]
         if e["game_name"]:
@@ -276,8 +345,8 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
             ET.SubElement(prog, "category", {"lang": "en"}).text = "Live"
         if e.get("twitch_url"):
             ET.SubElement(prog, "url").text = e["twitch_url"]
-        if e["icon_url"]:
-            ET.SubElement(prog, "icon", {"src": e["icon_url"]})
+        for icon in _entry_icons(e):
+            ET.SubElement(prog, "icon", {k: str(v) for k, v in icon.items() if v})
         programme_count += 1
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -317,19 +386,49 @@ def upsert_db(entries: list[dict], data_dir: str) -> dict:
     now = djtz.now()
     seen_tvg_ids: set[str] = set()
 
-    epg_rows: dict[str, EPGData] = {}
+    entry_by_tvg: dict[str, dict] = {}
     for e in entries:
         tvg = channel_tvg_id(e["login"])
         seen_tvg_ids.add(tvg)
-        epg, _ = EPGData.objects.update_or_create(
-            tvg_id=tvg,
-            epg_source=source,
-            defaults={
-                "name": e.get("channel_name") or e["display_name"],
-                "icon_url": e["icon_url"] or None,
-            },
-        )
-        epg_rows[tvg] = epg
+        entry_by_tvg[tvg] = e
+
+    existing_epg = {
+        row.tvg_id: row
+        for row in EPGData.objects.filter(epg_source=source, tvg_id__in=seen_tvg_ids)
+    }
+    to_create: list[EPGData] = []
+    to_update: list[EPGData] = []
+    for tvg, e in entry_by_tvg.items():
+        name = e.get("channel_name") or e["display_name"]
+        icon_url = e["icon_url"] or None
+        epg = existing_epg.get(tvg)
+        if epg is None:
+            to_create.append(EPGData(
+                tvg_id=tvg,
+                epg_source=source,
+                name=name,
+                icon_url=icon_url,
+            ))
+            continue
+        changed = False
+        if epg.name != name:
+            epg.name = name
+            changed = True
+        if epg.icon_url != icon_url:
+            epg.icon_url = icon_url
+            changed = True
+        if changed:
+            to_update.append(epg)
+
+    if to_create:
+        EPGData.objects.bulk_create(to_create, batch_size=500)
+    if to_update:
+        EPGData.objects.bulk_update(to_update, ["name", "icon_url"], batch_size=500)
+
+    epg_rows: dict[str, EPGData] = {
+        row.tvg_id: row
+        for row in EPGData.objects.filter(epg_source=source, tvg_id__in=seen_tvg_ids)
+    }
 
     # Wipe and rebuild programmes in bulk — guide is small (1 programme per
     # channel) and we always want the freshest title/game/viewer count.
@@ -358,7 +457,7 @@ def upsert_db(entries: list[dict], data_dir: str) -> dict:
             start_time=started,
             end_time=end,
             title=e["title"],
-            sub_title=e.get("stream_title") or e["game_name"] or "",
+            sub_title=e.get("sub_title") or "",
             description=e["description"] or "",
             custom_properties={
                 "twitch_login": e["login"],
@@ -375,14 +474,15 @@ def upsert_db(entries: list[dict], data_dir: str) -> dict:
         ProgramData.objects.bulk_create(new_programs, batch_size=500)
 
     # Link existing Channels to their EPGData (idempotent / safe to repeat).
-    linked_channels = 0
-    for tvg, epg in epg_rows.items():
-        updated = (
-            Channel.objects.filter(tvg_id=tvg)
-            .exclude(epg_data_id=epg.id)
-            .update(epg_data=epg)
-        )
-        linked_channels += updated
+    channels_to_link = []
+    for channel in Channel.objects.filter(tvg_id__in=seen_tvg_ids).only("id", "tvg_id", "epg_data_id"):
+        epg = epg_rows.get(channel.tvg_id)
+        if epg and channel.epg_data_id != epg.id:
+            channel.epg_data = epg
+            channels_to_link.append(channel)
+    linked_channels = len(channels_to_link)
+    if channels_to_link:
+        Channel.objects.bulk_update(channels_to_link, ["epg_data"], batch_size=500)
 
     # Drop guide rows for channels that are no longer in the list
     stale = EPGData.objects.filter(epg_source=source).exclude(tvg_id__in=seen_tvg_ids)
