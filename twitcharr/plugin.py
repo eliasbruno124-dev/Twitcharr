@@ -17,7 +17,6 @@ import os
 import threading
 import time
 from typing import Any
-from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -29,27 +28,9 @@ logger = logging.getLogger(__name__)
 PLUGIN_KEY = "twitcharr"
 GITHUB_REPO = "eliasbruno124-dev/Dispatcharr-Twitch-EPG"
 GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}"
+GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
 DONATE_URL = "https://paypal.me/eliasbruno124"
-
-OFFLINE_PROGRAM_SVG = (
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 272 380'>"
-    "<path fill='#0e0e10' d='M0 0h272v380H0z'/>"
-    "<path fill='#9146ff' d='M46 62h180v188h-48l-36 36h-36v-36H46z'/>"
-    "<path fill='#18181b' d='M66 86h140v130h-72l-26 26v-26H66z'/>"
-    "<path fill='#fff' d='M86 116h84v24h-30v72h-28v-72H86zm96 0h22v78h-22z'/>"
-    "</svg>"
-)
-OFFLINE_CHANNEL_SVG = (
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 272 380'>"
-    "<path fill='#0e0e10' d='M0 0h272v380H0z'/>"
-    "<path fill='#9146ff' d='M46 62h180v188h-48l-36 36h-36v-36H46z'/>"
-    "<path fill='#18181b' d='M66 86h140v130h-72l-26 26v-26H66z'/>"
-    "<path fill='#fff' d='M86 116h84v24h-30v72h-28v-72H86zm96 0h22v78h-22z'/>"
-    "</svg>"
-)
-SVG_DATA_SAFE = "/:=;'(),<>"
-OFFLINE_PROGRAM_ICON_URL = f"data:image/svg+xml,{quote(OFFLINE_PROGRAM_SVG, safe=SVG_DATA_SAFE)}"
-OFFLINE_CHANNEL_ICON_URL = f"data:image/svg+xml,{quote(OFFLINE_CHANNEL_SVG, safe=SVG_DATA_SAFE)}"
+OFFLINE_ARTWORK_URL = f"{GITHUB_RAW_URL}/twitcharr/assets/offline.png"
 
 
 DEFAULT_TTVLOL_PROXY_SERVERS = (
@@ -162,11 +143,13 @@ def _proxy_servers(settings: dict) -> str:
 
 
 def _offline_icon_url(settings: dict, *, cache_bust: int | None = None) -> str:
-    return OFFLINE_CHANNEL_ICON_URL
+    version = str(_MANIFEST.get("version") or "").strip() or int(time.time())
+    return f"{OFFLINE_ARTWORK_URL}?v={version}"
 
 
 def _offline_program_icon_url(settings: dict, *, cache_bust: int | None = None) -> str:
-    return OFFLINE_PROGRAM_ICON_URL
+    version = str(_MANIFEST.get("version") or "").strip() or int(time.time())
+    return f"{OFFLINE_ARTWORK_URL}?v={version}"
 
 
 # ---------------------------------------------------------------------------
@@ -1081,7 +1064,7 @@ def _ensure_schedule_running() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = str(_MANIFEST.get("version") or "1.2.18")
+    version = str(_MANIFEST.get("version") or "1.2.21")
     description = (
         "Twitch Live TV for Dispatcharr with anonymous metadata, Streamlink "
         "playback, XMLTV guide data and channel sync. No Twitch sign-in required."

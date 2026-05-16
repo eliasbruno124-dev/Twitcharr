@@ -231,15 +231,11 @@ def build_entries(
             started_at = s.started_at
             viewers = s.viewer_count
         else:
-            # Emby/Jellyfin handle normal Twitch image URLs much more reliably
-            # than inline SVG/data URLs in "Now playing" tiles. For offline
-            # streamers, use the Twitch profile image immediately instead of a
-            # custom placeholder that some clients render as broken artwork.
-            icon_url = _cache_bust_image_url(u.profile_image_url, cache_bust)
-            program_icon_url = icon_url
+            icon_url = offline_icon
+            program_icon_url = offline_program_icon or icon_url
             game_name = ""
-            title = f"⚫ {u.display_name}"
-            channel_name = u.display_name
+            title = f"{u.display_name} (offline)"
+            channel_name = f"{u.display_name} (offline)"
             description_parts = [
                 "Status: Offline",
                 f"Link: https://twitch.tv/{login}",

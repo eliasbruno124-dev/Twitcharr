@@ -17,7 +17,7 @@ Important: Twitcharr can download and use the third-party [`streamlink-ttvlol`](
 | Instant guide link | New or changed Channels are linked to freshly written Twitcharr EPG rows in the same sync cycle. |
 | Plugin logo | Includes `logo.png` so Twitcharr has its own icon on the Dispatcharr plugin card. |
 | Offline handling | Can keep offline channels or remove offline channels while they are offline. |
-| Offline icons | Includes built-in 16:9 and poster-style Twitcharr offline cards for Emby/Jellyfin tiles. |
+| Offline artwork | Uses a Twitch-styled `272x380` PNG with OFFLINE text for offline streamers, matching Twitch game-art proportions. |
 | DB-safe artwork URLs | Keeps Dispatcharr Logo and EPG icon URLs below the 500-character database limit. |
 | Adaptive quality | Measures bandwidth and updates the Streamlink quality fallback chain. |
 | Short StreamProfile parameters | Stores long Streamlink options in `<data_dir>/twitcharr.streamlinkrc` so Dispatcharr's 500-character parameter field is not exceeded. |
@@ -25,13 +25,9 @@ Important: Twitcharr can download and use the third-party [`streamlink-ttvlol`](
 | Emby / Jellyfin | Triggers the server's Refresh Guide task after scheduled EPG refreshes if URL and media-server token are configured. |
 | Diagnostics | Includes proxy and bandwidth checks. |
 
-Built-in plugin and offline artwork:
+Built-in plugin artwork:
 
 ![Twitcharr plugin logo](twitcharr/logo.png)
-
-![Twitcharr offline card](twitcharr/assets/offline.svg)
-
-![Twitcharr offline poster card](twitcharr/assets/offline-poster.svg)
 
 Plugin settings screenshot:
 
@@ -181,13 +177,13 @@ Instead it writes guide data where TV clients expect it:
 - channel icons, using current game/category artwork for live streams
 - programme icons in XMLTV, using category/game artwork when an icon is available
 - rich programme titles with streamer, category and current Twitch viewer count
-- embedded SVG offline cards for both channel logos and 16:9 programme artwork
+- a Twitch-styled PNG offline card for offline streamers, using the same `272x380` proportions as Twitch game artwork
 
 For Emby and Jellyfin, the plugin triggers the server's Refresh Guide task after scheduled EPG refreshes. That is still required because those servers cache Live TV guide data.
 
 Channel syncs also link freshly-created Dispatcharr Channels to the current Twitcharr EPG rows immediately, then trigger the media-server guide refresh and warm Live TV image cache entries.
 
-Twitcharr keeps artwork URLs stored in Dispatcharr database fields short enough for Dispatcharr's 500-character URL columns. Offline artwork uses compact inline SVG data URLs with Twitch game-art proportions, so offline tiles can appear immediately without waiting for an external image fetch.
+Twitcharr keeps artwork URLs stored in Dispatcharr database fields short enough for Dispatcharr's 500-character URL columns. Offline streamers use a normal PNG URL instead of SVG/data URLs because Emby/Jellyfin render PNG artwork more reliably in Live TV tiles.
 
 ## Troubleshooting
 
