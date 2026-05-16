@@ -1,6 +1,6 @@
 FILENAME: 06-health-check.png
 
-Capture the System status / health-check action result.
+Capture a proxy or bandwidth check action result.
 
 Show:
 - settings_validation

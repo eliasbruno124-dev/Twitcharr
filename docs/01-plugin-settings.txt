@@ -6,7 +6,6 @@ Show:
 - Twitch channels / discovery with comma-separated examples
 - Trending countries and counts
 - Stream quality set to adaptive
-- Show offline channels and placeholder settings
-- Offline channel icon field
+- Show offline channels setting
 
 Avoid showing real secrets.

@@ -4,9 +4,7 @@ used to play Twitch streams via streamlink + the auto-updated streamlink-ttvlol.
 The plugin marks every object it owns with a custom_properties tag so it can
 clean up safely on uninstall. Channels for logins that are no longer live (and
 'show offline channels' is OFF) are pruned each cycle so the lineup tracks the
-actual live state. A sentinel "no streams online" placeholder channel can
-optionally be kept around so Emby/Jellyfin Live TV never collapses to an empty
-section.
+actual live state.
 """
 
 from __future__ import annotations
@@ -18,15 +16,13 @@ from typing import Iterable
 from django.db import transaction
 
 from . import ttvlol
-from .epg import channel_tvg_id
+from .epg import TVG_ID_PREFIX, channel_tvg_id
 
 logger = logging.getLogger(__name__)
 
 PROFILE_NAME = "Twitcharr (ad-free, low-latency)"
 OWNER_TAG = "twitcharr"
-PLACEHOLDER_LOGIN = "_placeholder_"
-PLACEHOLDER_TVG_ID = f"twitch.{PLACEHOLDER_LOGIN}"
-PLACEHOLDER_NAME = "Twitch (no stream online)"
+LEGACY_PLACEHOLDER_TVG_ID = "twitch._placeholder_"
 
 
 # ---------------------------------------------------------------------------
@@ -62,8 +58,13 @@ def build_streamlink_parameters(
         "--stream-segment-attempts", base_segment_attempts,
         "--stream-segment-timeout", base_segment_timeout,
         "--stream-timeout", base_stream_timeout,
+        # Dispatcharr containers usually do not have a usable browser. With
+        # ttv.lol playlist proxies, Streamlink does not need client-integrity.
+        "--webbrowser", "no",
         "--twitch-disable-ads",
         "--twitch-proxy-playlist-fallback",
+        "--twitch-access-token-param", "playerType=site",
+        "--twitch-access-token-param", "platform=web",
         "--http-header", "User-Agent={userAgent}",
         "--retry-streams", "1",
         "--retry-max", "2",
@@ -197,20 +198,49 @@ def _next_channel_number(starting_from: float, used: set[float]) -> float:
     return n
 
 
-def _placeholder_entry(*, offline_icon_url: str = "") -> dict:
-    return {
-        "login": PLACEHOLDER_LOGIN,
-        "display_name": PLACEHOLDER_NAME,
-        "channel_name": PLACEHOLDER_NAME,
-        "profile_image_url": "",
-        "icon_url": offline_icon_url or "",
-        "description": "Currently no streams online. Channels will appear automatically when streamers go live.",
-        "live": False,
-        "title": "⚫ No stream online",
-        "game_name": "",
-        "started_at": "",
-        "viewer_count": 0,
-    }
+def _move_channels_to_temporary_numbers(
+    channels: Iterable,
+    used: set[float],
+    *,
+    above: float,
+) -> None:
+    """Free final channel numbers before we renumber managed channels."""
+    channel_numbers = [float(getattr(channel, "channel_number", 0) or 0) for channel in channels]
+    cursor = max([above, 0, *[float(n or 0) for n in used], *channel_numbers]) + 10000
+    occupied = set(used)
+    for channel in channels:
+        cursor = _next_channel_number(cursor, occupied)
+        occupied.add(cursor)
+        channel.channel_number = cursor
+        channel.save(update_fields=["channel_number"])
+        cursor += 1
+
+
+def _delete_legacy_placeholder() -> tuple[int, int]:
+    """Remove placeholder rows created by older Twitcharr versions."""
+    from apps.channels.models import Channel, Stream
+
+    channels = Channel.objects.filter(tvg_id=LEGACY_PLACEHOLDER_TVG_ID)
+    channel_count = channels.count()
+    channels.delete()
+
+    streams = Stream.objects.filter(
+        custom_properties__owner=OWNER_TAG,
+        custom_properties__is_placeholder=True,
+    )
+    stream_count = streams.count()
+    streams.delete()
+
+    try:
+        from apps.epg.models import EPGData, ProgramData
+
+        placeholder_epg = EPGData.objects.filter(tvg_id=LEGACY_PLACEHOLDER_TVG_ID)
+        ProgramData.objects.filter(epg__in=placeholder_epg).delete()
+        placeholder_epg.delete()
+    except Exception:
+        logger.exception("Legacy placeholder EPG cleanup failed (non-fatal)")
+
+    return channel_count, stream_count
 
 
 @transaction.atomic
@@ -223,8 +253,8 @@ def sync_channels(
     proxy_servers: str,
     quality: str,
     low_latency: bool,
-    keep_placeholder: bool = True,
     offline_icon_url: str = "",
+    offline_program_icon_url: str = "",
     fast_startup: bool = True,
 ) -> dict:
     """Create / update Channel + Stream rows for every entry.
@@ -232,9 +262,6 @@ def sync_channels(
     Idempotent: re-running matches existing rows by Stream.url and Channel.tvg_id.
     Channels for logins outside the current entry list are pruned (so toggling
     'show offline' OFF actually removes those channels).
-
-    `keep_placeholder=True` always keeps a sentinel "no streams online" channel
-    in the lineup so Emby/Jellyfin Live TV never has zero channels.
 
     Returns counts plus a list of synced logins (for logging / UI).
     """
@@ -250,46 +277,16 @@ def sync_channels(
     group = _channel_group(group_name)
     custom_account = _custom_m3u_account()
 
-    used_numbers: set[float] = set(Channel.objects.values_list("channel_number", flat=True))
-
     created_channels = 0
     updated_channels = 0
     created_streams = 0
     synced_logins: list[str] = []
-    synced_tvg_ids: set[str] = set()
-
-    # Decide whether to inject the placeholder. We add it whenever:
-    #   * the user wants it AND
-    #   * there are no live channels right now (real-life lineup might be empty).
-    #
-    # When the placeholder is active we also drop the offline entries so the
-    # lineup shows ONLY the "no streams online" tile — otherwise users see
-    # both the placeholder and one greyed-out tile per offline streamer.
-    has_live = any(e.get("live") for e in entries)
-    if keep_placeholder and not has_live:
-        real_entries = [_placeholder_entry(offline_icon_url=offline_icon_url)]
-    else:
-        real_entries = list(entries)
-        # Defensive cleanup: when at least one real stream is live, eagerly
-        # tear down any leftover placeholder Channel / Stream / EPGData /
-        # ProgramData rows BEFORE we create real ones. Otherwise a stale
-        # placeholder from a previous "nobody live" cycle could survive long
-        # enough for the UI to render a freshly-added live channel under the
-        # "⚫ No stream online" programme.
-        if has_live:
-            try:
-                Channel.objects.filter(tvg_id=PLACEHOLDER_TVG_ID).delete()
-                Stream.objects.filter(
-                    custom_properties__owner=OWNER_TAG,
-                    custom_properties__is_placeholder=True,
-                ).delete()
-                from apps.epg.models import EPGData, ProgramData
-
-                placeholder_epg = EPGData.objects.filter(tvg_id=PLACEHOLDER_TVG_ID)
-                ProgramData.objects.filter(epg__in=placeholder_epg).delete()
-                placeholder_epg.delete()
-            except Exception:
-                logger.exception("Defensive placeholder cleanup failed (non-fatal)")
+    real_entries = list(entries)
+    synced_tvg_ids: set[str] = {channel_tvg_id(e["login"]) for e in real_entries}
+    legacy_placeholder_channels, legacy_placeholder_streams = _delete_legacy_placeholder()
+    pruned_channels, pruned_streams = _prune_unmanaged(synced_tvg_ids)
+    pruned_channels += legacy_placeholder_channels
+    pruned_streams += legacy_placeholder_streams
 
     # Prefetch every EPGData row for the upcoming tvg_ids in one query so we
     # can attach `epg_data` at Channel creation time. Without this, channels
@@ -308,19 +305,26 @@ def sync_channels(
     except Exception:
         logger.exception("Could not prefetch EPGData rows; channels will be linked after creation")
 
+    existing_channels = list(Channel.objects.filter(tvg_id__in=synced_tvg_ids))
+    existing_by_tvg = {channel.tvg_id: channel for channel in existing_channels}
+    used_numbers: set[float] = set(
+        Channel.objects.exclude(tvg_id__in=synced_tvg_ids).values_list("channel_number", flat=True)
+    )
+    _move_channels_to_temporary_numbers(
+        existing_channels,
+        used_numbers,
+        above=float(starting_channel_number) + len(real_entries),
+    )
+
     for idx, e in enumerate(real_entries):
         login = e["login"]
         tvg = channel_tvg_id(login)
-        synced_tvg_ids.add(tvg)
         channel_name = e.get("channel_name") or e["display_name"]
 
-        is_placeholder = login == PLACEHOLDER_LOGIN
-        twitch_url = (
-            "about:blank#twitch-epg-placeholder"
-            if is_placeholder
-            else f"https://twitch.tv/{login}"
-        )
+        twitch_url = f"https://twitch.tv/{login}"
         logo = _logo_for(login, channel_name, e["icon_url"])
+        number = _next_channel_number(float(starting_channel_number) + idx, used_numbers)
+        used_numbers.add(number)
 
         stream_defaults = {
             "name": channel_name,
@@ -335,7 +339,6 @@ def sync_channels(
                 "twitch_login": login,
                 "twitch_live": bool(e.get("live")),
                 "twitch_viewers": int(e.get("viewer_count") or 0),
-                "is_placeholder": is_placeholder,
             },
         }
         stream = Stream.objects.filter(url=twitch_url, is_custom=True).first()
@@ -354,19 +357,18 @@ def sync_channels(
             "tvg_id": tvg,
             "stream_profile": profile,
             "logo": logo,
+            "channel_number": number,
         }
         if epg_row is not None:
             ch_defaults["epg_data"] = epg_row
-        channel = Channel.objects.filter(tvg_id=tvg).first()
+        channel = existing_by_tvg.get(tvg)
         if channel:
             for k, v in ch_defaults.items():
                 setattr(channel, k, v)
             channel.save()
             updated_channels += 1
         else:
-            number = _next_channel_number(float(starting_channel_number) + idx, used_numbers)
-            used_numbers.add(number)
-            channel = Channel.objects.create(channel_number=number, **ch_defaults)
+            channel = Channel.objects.create(**ch_defaults)
             created_channels += 1
 
         ChannelStream.objects.update_or_create(
@@ -375,24 +377,14 @@ def sync_channels(
 
         synced_logins.append(login)
 
-    # Prune managed channels that aren't in this sync (offline streamers when
-    # 'show offline' is OFF, or logins removed from the configured list).
-    pruned_channels, pruned_streams = _prune_unmanaged(synced_tvg_ids)
-
-    visible_channel_names = [l for l in synced_logins if l != PLACEHOLDER_LOGIN]
     return {
-        "message": (
-            "No Twitch streams are live; placeholder channel is active."
-            if keep_placeholder and not has_live
-            else f"Synced {len(visible_channel_names)} Twitch channels."
-        ),
+        "message": f"Synced {len(synced_logins)} Twitch channels.",
         "channels_created": created_channels,
         "channels_updated": updated_channels,
         "channels_pruned": pruned_channels,
         "streams_created": created_streams,
         "streams_pruned": pruned_streams,
-        "placeholder_active": (keep_placeholder and not has_live),
-        "channel_names": visible_channel_names,
+        "channel_names": synced_logins,
         "stream_profile_id": profile.id,
         "channel_group_id": group.id,
     }
@@ -432,12 +424,17 @@ def uninstall_managed_objects() -> dict:
     from apps.channels.models import Channel, Stream
     from apps.epg.models import EPGSource
     from core.models import StreamProfile
+    from django.db.models import Q
 
-    streams = Stream.objects.filter(custom_properties__owner=OWNER_TAG)
+    streams = Stream.objects.filter(
+        Q(custom_properties__owner=OWNER_TAG)
+        | Q(tvg_id__startswith=TVG_ID_PREFIX)
+    ).distinct()
     stream_count = streams.count()
 
     channels = Channel.objects.filter(
-        streams__custom_properties__owner=OWNER_TAG
+        Q(streams__custom_properties__owner=OWNER_TAG)
+        | Q(tvg_id__startswith=TVG_ID_PREFIX)
     ).distinct()
     channel_count = channels.count()
     channels.delete()

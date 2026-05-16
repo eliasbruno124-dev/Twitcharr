@@ -29,6 +29,8 @@ EPG_SOURCE_NAME = "Twitch (managed by Twitcharr)"
 TVG_ID_PREFIX = "twitch."
 LIVE_PROGRAMME_HOURS = 24
 OFFLINE_PROGRAMME_HOURS = 24
+OFFLINE_PROGRAMME_START_BACKDATE_MINUTES = 5
+DESCRIPTION_SEPARATOR = "<br />"
 
 # Twitch's CDN preview URL for any live channel. The CDN refreshes the JPEG
 # every ~30s, but downstream caches (Dispatcharr → Emby → browser) hold the URL
@@ -70,6 +72,11 @@ def channel_tvg_id(login: str) -> str:
     return f"{TVG_ID_PREFIX}{login.lower()}"
 
 
+def _join_description(parts: list[str]) -> str:
+    cleaned = [part.strip() for part in parts if (part or "").strip()]
+    return DESCRIPTION_SEPARATOR.join(cleaned)
+
+
 def xmltv_path(data_dir: str) -> str:
     return os.path.join(data_dir, "twitch.xmltv")
 
@@ -105,17 +112,17 @@ def build_entries(
     client: tw.TwitchClient,
     logins: list[str],
     *,
-    use_profile_pic_when_just_chatting: bool = True,
     include_offline: bool = True,
     offline_icon_url: str = "",
-    use_live_thumbnails: bool = True,
+    offline_program_icon_url: str = "",
+    use_live_thumbnails: bool = False,
     cache_bust: int = 0,
 ) -> list[dict]:
     """Returns a list of dicts, one per channel.
 
-    `offline_icon_url` overrides the icon for non-live channels. An empty
-    string explicitly means "no icon at all" (so the channel tile shows no
-    image while the streamer is offline).
+    `icon_url` is the channel/overview logo. `program_icon_url` is the current
+    programme artwork, so TV clients can use 16:9 guide art without forcing
+    that same image into portrait-style channel grids.
     """
     users = client.get_users(logins)
     streams = client.get_streams(logins)
@@ -124,6 +131,7 @@ def build_entries(
     games = client.get_games(game_ids) if game_ids else {}
 
     offline_icon = (offline_icon_url or "").strip()
+    offline_program_icon = (offline_program_icon_url or offline_icon_url or "").strip()
 
     entries: list[dict] = []
     for login in logins:
@@ -141,54 +149,73 @@ def build_entries(
             game = games.get(s.game_id) if s.game_id else None
             game_name = (s.game_name or (game.name if game else "")).strip()
 
-            # Icon priority:
-            #   1. Live preview thumbnail (most dynamic, shows what's actually
-            #      on screen) — when `use_live_thumbnails` is on.
-            #   2. Game box art (when not Just Chatting, or that override is off).
-            #   3. Profile picture (Just Chatting w/ override, or no game art).
-            if use_live_thumbnails:
-                icon_url = live_preview_url(login, cache_bust=cache_bust)
-            elif game_name.lower() == "just chatting" and use_profile_pic_when_just_chatting:
-                icon_url = u.profile_image_url
-            elif game and game.box_art_url:
-                icon_url = tw.render_box_art(game.box_art_url)
+            # Programme artwork should be stable category art, not the live
+            # preview frame. This covers games as well as Twitch categories
+            # like Just Chatting / IRL when Twitch exposes box art for them.
+            if game and game.box_art_url:
+                program_icon_url = tw.render_box_art(game.box_art_url, width=640, height=360)
+            elif u.profile_image_url:
+                program_icon_url = u.profile_image_url
+            elif use_live_thumbnails:
+                program_icon_url = live_preview_url(login, cache_bust=cache_bust)
             else:
+                program_icon_url = ""
+
+            # Channel/overview artwork follows the current category/game too.
+            # Profile pictures are only a fallback when Twitch has no box art.
+            if game and game.box_art_url:
+                icon_url = tw.render_box_art(game.box_art_url)
+            elif program_icon_url:
+                icon_url = program_icon_url
+            elif u.profile_image_url:
                 icon_url = u.profile_image_url
+            else:
+                icon_url = ""
 
             stream_title = (s.title or "").strip()
             uptime_str = _format_uptime(s.started_at, datetime.now(timezone.utc))
             viewer_label = _viewer_label(s.viewer_count)
 
             # Programme title: the at-a-glance line shown in the channel grid.
-            # Streamer + game + viewer count is enough — the description carries
-            # the stream-specific info so the two are never identical.
             title_parts = [f"🔴 {u.display_name}", game_name or "Live"]
             if viewer_label:
                 title_parts.append(viewer_label)
             title = " • ".join(title_parts)
             channel_name = u.display_name
 
-            # Programme description: the streamer's actual Twitch title plus
-            # uptime and the channel URL. We deliberately do NOT repeat the
-            # game name or viewer count here because those already appear in
-            # the title above — duplicating them made title and description
-            # look identical for streams without a custom title.
-            description_parts: list[str] = []
+            # Keep each metadata item on its own line so XMLTV/Dispatcharr
+            # detail views do not collapse status, link and bio into a blob.
+            description_parts: list[str] = [
+                "Status: Online",
+                f"Link: https://twitch.tv/{login}",
+            ]
             if stream_title:
-                description_parts.append(stream_title)
+                description_parts.append(f"Title: {stream_title}")
+            if game_name:
+                description_parts.append(f"Category: {game_name}")
+            if viewer_label:
+                description_parts.append(f"Viewers: {viewer_label}")
             if uptime_str:
-                description_parts.append(f"Live for {uptime_str}")
-            description_parts.append(f"https://twitch.tv/{login}")
-            description = "\n".join(description_parts)
+                description_parts.append(f"Live: {uptime_str}")
+            if (u.description or "").strip():
+                description_parts.append(f"Bio: {(u.description or '').strip()}")
+            description = _join_description(description_parts)
             started_at = s.started_at
             viewers = s.viewer_count
         else:
-            # offline_icon_url: empty string -> no image; otherwise use it.
-            icon_url = offline_icon if offline_icon else ""
+            # Use the bundled plugin assets directly for offline artwork.
+            icon_url = offline_icon
+            program_icon_url = offline_program_icon or icon_url
             game_name = ""
             title = f"⚫ {u.display_name} (offline)"
             channel_name = f"{u.display_name} (offline)"
-            description = (u.description or "").strip()
+            description_parts = [
+                "Status: Offline",
+                f"Link: https://twitch.tv/{login}",
+            ]
+            if (u.description or "").strip():
+                description_parts.append(f"Bio: {(u.description or '').strip()}")
+            description = _join_description(description_parts)
             stream_title = ""
             viewer_label = ""
             started_at = ""
@@ -200,6 +227,7 @@ def build_entries(
             "channel_name": channel_name,
             "profile_image_url": u.profile_image_url,
             "icon_url": icon_url,
+            "program_icon_url": program_icon_url,
             "description": description,
             "live": live,
             "title": title,
@@ -257,7 +285,7 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
             start = _parse_iso(e["started_at"]) or now
             end = now + timedelta(hours=LIVE_PROGRAMME_HOURS)
         else:
-            start = now
+            start = now - timedelta(minutes=OFFLINE_PROGRAMME_START_BACKDATE_MINUTES)
             end = now + timedelta(hours=OFFLINE_PROGRAMME_HOURS)
 
         prog = ET.SubElement(tv, "programme", {
@@ -266,8 +294,6 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
             "channel": channel_tvg_id(e["login"]),
         })
         ET.SubElement(prog, "title", {"lang": "en"}).text = e["title"]
-        if e.get("stream_title"):
-            ET.SubElement(prog, "sub-title", {"lang": "en"}).text = e["stream_title"]
         if e["description"]:
             ET.SubElement(prog, "desc", {"lang": "en"}).text = e["description"]
         if e["game_name"]:
@@ -276,8 +302,9 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
             ET.SubElement(prog, "category", {"lang": "en"}).text = "Live"
         if e.get("twitch_url"):
             ET.SubElement(prog, "url").text = e["twitch_url"]
-        if e["icon_url"]:
-            ET.SubElement(prog, "icon", {"src": e["icon_url"]})
+        program_icon_url = e.get("program_icon_url") or ""
+        if program_icon_url:
+            ET.SubElement(prog, "icon", {"src": program_icon_url})
         programme_count += 1
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -349,8 +376,20 @@ def upsert_db(entries: list[dict], data_dir: str) -> dict:
             if started.tzinfo is None:
                 started = started.replace(tzinfo=timezone.utc)
         else:
-            started = now
+            started = now - timedelta(minutes=OFFLINE_PROGRAMME_START_BACKDATE_MINUTES)
             end = now + timedelta(hours=OFFLINE_PROGRAMME_HOURS)
+
+        custom_properties = {
+            "twitch_login": e["login"],
+            "twitch_live": e["live"],
+            "twitch_viewers": e["viewer_count"],
+            "twitch_display_name": e["display_name"],
+            "twitch_game_name": e["game_name"],
+            "twitch_stream_title": e.get("stream_title") or "",
+            "twitch_url": e.get("twitch_url") or f"https://twitch.tv/{e['login']}",
+        }
+        if e.get("program_icon_url"):
+            custom_properties["icon"] = e["program_icon_url"]
 
         new_programs.append(ProgramData(
             epg=epg,
@@ -358,17 +397,9 @@ def upsert_db(entries: list[dict], data_dir: str) -> dict:
             start_time=started,
             end_time=end,
             title=e["title"],
-            sub_title=e.get("stream_title") or e["game_name"] or "",
+            sub_title="",
             description=e["description"] or "",
-            custom_properties={
-                "twitch_login": e["login"],
-                "twitch_live": e["live"],
-                "twitch_viewers": e["viewer_count"],
-                "twitch_display_name": e["display_name"],
-                "twitch_game_name": e["game_name"],
-                "twitch_stream_title": e.get("stream_title") or "",
-                "twitch_url": e.get("twitch_url") or f"https://twitch.tv/{e['login']}",
-            },
+            custom_properties=custom_properties,
         ))
 
     if new_programs:

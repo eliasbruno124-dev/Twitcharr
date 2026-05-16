@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 640">
+  <rect width="360" height="640" fill="#18181b"/>
+  <circle cx="180" cy="184" r="112" fill="#9146ff"/>
+  <circle cx="180" cy="184" r="78" fill="#0e0e10"/>
+  <text x="180" y="402" text-anchor="middle" fill="#fff" font-family="Arial, sans-serif" font-size="52" font-weight="900">OFFLINE</text>
+</svg>

@@ -9,8 +9,7 @@ The main README links to the PNG files listed below. They can be added later; Gi
 | `03-channel-grid.png` | Live TV channel grid |
 | `04-epg-detail.png` | Guide detail view |
 | `05-settings-quality.png` | Quality and bandwidth settings |
-| `06-health-check.png` | Status / health-check output |
-| `07-discord-notification.png` | Discord test or go-live notification |
+| `06-health-check.png` | Proxy or bandwidth check output |
 | `08-self-update.png` | Update check or apply-update result |
 
-Keep screenshots at `1600x900` or `1280x720` when possible. Use real-looking sample data, but do not include private tokens, webhook URLs or secrets.
+Keep screenshots at `1600x900` or `1280x720` when possible. Use real-looking sample data, but do not include private tokens or secrets.
