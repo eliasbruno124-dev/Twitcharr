@@ -152,8 +152,12 @@ def build_entries(
             # Programme artwork should be stable category art, not the live
             # preview frame. This covers games as well as Twitch categories
             # like Just Chatting / IRL when Twitch exposes box art for them.
+            # Keep Twitch box art in its native portrait ratio (~272x380) —
+            # forcing it into 640x360 stretches the artwork horizontally and
+            # then portrait tiles (Emby "Läuft gerade") distort it a second
+            # time when cropping back to portrait.
             if game and game.box_art_url:
-                program_icon_url = tw.render_box_art(game.box_art_url, width=640, height=360)
+                program_icon_url = tw.render_box_art(game.box_art_url)
             elif u.profile_image_url:
                 program_icon_url = u.profile_image_url
             elif use_live_thumbnails:
