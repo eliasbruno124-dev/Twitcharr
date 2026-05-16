@@ -15,6 +15,7 @@ Provides three layers:
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Iterable, Sequence
@@ -27,6 +28,7 @@ GQL_URL = "https://gql.twitch.tv/gql"
 PUBLIC_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
 GQL_BATCH = 25
 DEFAULT_TIMEOUT = 15
+BOX_ART_SIZE_RE = re.compile(r"-\d+x\d+(?=\.[a-zA-Z0-9]+(?:\?|$))")
 
 CHANNEL_QUERY = """
 query Twitcharr($login: String!) {
@@ -500,4 +502,5 @@ def resolve_logins(client: TwitchClient, items: list[dict]) -> list[str]:
 def render_box_art(url: str, width: int = 272, height: int = 380) -> str:
     if not url:
         return ""
-    return url.replace("{width}", str(width)).replace("{height}", str(height))
+    rendered = url.replace("{width}", str(width)).replace("{height}", str(height))
+    return BOX_ART_SIZE_RE.sub(f"-{width}x{height}", rendered, count=1)
