@@ -231,11 +231,15 @@ def build_entries(
             started_at = s.started_at
             viewers = s.viewer_count
         else:
-            icon_url = offline_icon
-            program_icon_url = offline_program_icon or icon_url
+            # Emby/Jellyfin render Twitch profile images reliably in Live TV
+            # tiles. Custom offline SVG/PNG placeholders can lag or break in
+            # this view, so offline channels use the streamer's profile image
+            # while the programme title carries the offline state.
+            icon_url = _cache_bust_image_url(u.profile_image_url, cache_bust)
+            program_icon_url = icon_url
             game_name = ""
-            title = f"{u.display_name} (offline)"
-            channel_name = f"{u.display_name} (offline)"
+            title = "⚫ Offline"
+            channel_name = "Offline"
             description_parts = [
                 "Status: Offline",
                 f"Link: https://twitch.tv/{login}",

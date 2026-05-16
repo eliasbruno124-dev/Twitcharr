@@ -1,6 +1,6 @@
 {
   "name": "Twitcharr",
-  "version": "1.2.21",
+  "version": "1.2.24",
   "description": "A polished Twitch Live TV lineup for Dispatcharr. Add channels or discovery rules, then sync channels, streams and XMLTV guide data using anonymous Twitch metadata only. No OAuth, Client ID, Client Secret or Twitch sign-in required.",
   "author": "eliasbruno124",
   "help_url": "https://github.com/eliasbruno124-dev/Dispatcharr-Twitch-EPG",
@@ -13,28 +13,6 @@
       "default": "",
       "placeholder": "gronkh, papaplatte, knossi\ntop:de:25\ngame:Just Chatting:10\nsearch:knossi",
       "description": "Enter Twitch names or URLs, separated by commas or line breaks. Discovery rules are supported: top, top:<lang>:<n>, game:<category>:<n>, search:<text>:<n>."
-    },
-    {
-      "id": "discovery_top_languages",
-      "label": "Trending countries",
-      "type": "text",
-      "default": "",
-      "placeholder": "de, en, fr",
-      "description": "Comma-separated language codes such as de, en or fr. Twitcharr adds the top live streams for each language on every refresh."
-    },
-    {
-      "id": "discovery_top_count",
-      "label": "Trending per country",
-      "type": "number",
-      "default": 0,
-      "description": "Number of streams to add per language code. Set to 0 to disable country-based discovery."
-    },
-    {
-      "id": "discovery_trending_count",
-      "label": "Global trending",
-      "type": "number",
-      "default": 0,
-      "description": "Number of globally trending streams to add on each refresh. Set to 0 to disable global discovery."
     },
     {
       "id": "channel_group_name",

@@ -4,7 +4,7 @@ Capture the Twitcharr settings page.
 
 Show:
 - Twitch channels / discovery with comma-separated examples
-- Trending countries and counts
+- Discovery tokens such as top:de:25 in the main channels field
 - Stream quality set to adaptive
 - Show offline channels setting
 

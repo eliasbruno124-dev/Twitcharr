@@ -193,25 +193,10 @@ def _twitch_client(_settings: dict):
 
 
 def _resolve_logins(settings: dict, client) -> list[str]:
-    """Parse the channels textarea + the convenience country/trending fields,
-    then expand every discovery token to a flat login list."""
+    """Parse the channels textarea and expand discovery tokens to logins."""
     from . import twitch_api as tw
 
     items = tw.parse_login_list(settings.get("channels") or "")
-
-    # Convenience: dedicated UI fields synthesize discovery tokens so users
-    # don't need to know the `top:de:25` syntax.
-    top_count = _int_setting(settings, "discovery_top_count", 0, min_value=0, max_value=100)
-    languages_raw = (settings.get("discovery_top_languages") or "").strip()
-    if top_count and languages_raw:
-        for code in (c.strip().lower() for c in languages_raw.replace(";", ",").split(",")):
-            if code and code.replace("-", "").isalpha():
-                items.append({"type": "top", "languages": [code], "limit": top_count})
-
-    trending_count = _int_setting(settings, "discovery_trending_count", 0, min_value=0, max_value=100)
-    if trending_count:
-        items.append({"type": "top", "languages": [], "limit": trending_count})
-
     if not items:
         return []
     return tw.resolve_logins(client, items)
@@ -593,15 +578,6 @@ def _validate_settings(settings: dict) -> dict:
     if bool(media_url) != bool(media_key):
         warnings.append("Set both Emby/Jellyfin URL and API key, or leave both empty.")
 
-    languages_raw = _text_setting(settings, "discovery_top_languages")
-    bad_languages = [
-        code.strip()
-        for code in languages_raw.replace(";", ",").split(",")
-        if code.strip() and not code.strip().replace("-", "").isalpha()
-    ]
-    if bad_languages:
-        warnings.append(f"Invalid language code(s): {', '.join(bad_languages)}.")
-
     return {
         "status": "error" if errors else ("warning" if warnings else "ok"),
         "errors": errors,
@@ -874,14 +850,7 @@ def _auto_apply_updates_enabled(settings: dict) -> bool:
 
 
 def _settings_have_twitch_inputs(settings: dict) -> bool:
-    if _text_setting(settings, "channels"):
-        return True
-    if _int_setting(settings, "discovery_trending_count", 0, min_value=0) > 0:
-        return True
-    return bool(
-        _text_setting(settings, "discovery_top_languages")
-        and _int_setting(settings, "discovery_top_count", 0, min_value=0) > 0
-    )
+    return bool(_text_setting(settings, "channels"))
 
 
 def _run_scheduled_tick() -> None:
@@ -1064,7 +1033,7 @@ def _ensure_schedule_running() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = str(_MANIFEST.get("version") or "1.2.21")
+    version = str(_MANIFEST.get("version") or "1.2.24")
     description = (
         "Twitch Live TV for Dispatcharr with anonymous metadata, Streamlink "
         "playback, XMLTV guide data and channel sync. No Twitch sign-in required."
