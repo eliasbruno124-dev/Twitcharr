@@ -1080,7 +1080,7 @@ def _ensure_schedule_running() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = str(_MANIFEST.get("version") or "1.2.12")
+    version = str(_MANIFEST.get("version") or "1.2.13")
     description = (
         "Twitch Live TV for Dispatcharr with anonymous metadata, Streamlink "
         "playback, XMLTV guide data and channel sync. No Twitch sign-in required."

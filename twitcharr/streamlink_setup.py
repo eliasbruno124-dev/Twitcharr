@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import shlex
-from typing import Iterable
 
 from django.db import transaction
 
@@ -198,24 +197,6 @@ def _next_channel_number(starting_from: float, used: set[float]) -> float:
     return n
 
 
-def _move_channels_to_temporary_numbers(
-    channels: Iterable,
-    used: set[float],
-    *,
-    above: float,
-) -> None:
-    """Free final channel numbers before we renumber managed channels."""
-    channel_numbers = [float(getattr(channel, "channel_number", 0) or 0) for channel in channels]
-    cursor = max([above, 0, *[float(n or 0) for n in used], *channel_numbers]) + 10000
-    occupied = set(used)
-    for channel in channels:
-        cursor = _next_channel_number(cursor, occupied)
-        occupied.add(cursor)
-        channel.channel_number = cursor
-        channel.save(update_fields=["channel_number"])
-        cursor += 1
-
-
 def _delete_legacy_placeholder() -> tuple[int, int]:
     """Remove placeholder rows created by older Twitcharr versions."""
     from apps.channels.models import Channel, Stream
@@ -307,14 +288,21 @@ def sync_channels(
 
     existing_channels = list(Channel.objects.filter(tvg_id__in=synced_tvg_ids))
     existing_by_tvg = {channel.tvg_id: channel for channel in existing_channels}
+
+    # Keep existing channel numbers stable across syncs. Renumbering caused
+    # Emby/Jellyfin to show stale guide data on the channel that took over
+    # a freed slot (e.g. with include_offline=False, B moving from 9001 to
+    # 9000 inherits A's cached programme for a while). New entries get the
+    # next free slot above starting_channel_number; offline streamers leave
+    # a numeric gap until they come back online.
     used_numbers: set[float] = set(
         Channel.objects.exclude(tvg_id__in=synced_tvg_ids).values_list("channel_number", flat=True)
     )
-    _move_channels_to_temporary_numbers(
-        existing_channels,
-        used_numbers,
-        above=float(starting_channel_number) + len(real_entries),
-    )
+    for ch in existing_channels:
+        if ch.channel_number:
+            used_numbers.add(float(ch.channel_number))
+
+    next_free_cursor = float(starting_channel_number)
 
     for idx, e in enumerate(real_entries):
         login = e["login"]
@@ -323,8 +311,14 @@ def sync_channels(
 
         twitch_url = f"https://twitch.tv/{login}"
         logo = _logo_for(login, channel_name, e["icon_url"])
-        number = _next_channel_number(float(starting_channel_number) + idx, used_numbers)
-        used_numbers.add(number)
+
+        existing_for_number = existing_by_tvg.get(tvg)
+        if existing_for_number and existing_for_number.channel_number:
+            number = float(existing_for_number.channel_number)
+        else:
+            number = _next_channel_number(next_free_cursor, used_numbers)
+            used_numbers.add(number)
+            next_free_cursor = number + 1
 
         stream_defaults = {
             "name": channel_name,
