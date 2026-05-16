@@ -755,6 +755,10 @@ def _run_check_updates(settings: dict) -> dict:
 def _run_apply_update(settings: dict) -> dict:
     from . import self_update
 
+    # Stop the scheduler before files are swapped on disk; otherwise the
+    # running thread keeps its stale bytecode and starts throwing ImportErrors
+    # the moment Dispatcharr reloads the module.
+    _stop_scheduler()
     return self_update.apply_update(
         current_version=_current_version(),
         data_dir=_data_dir(settings),
@@ -995,10 +999,23 @@ def _run_scheduled_tick() -> None:
 
 
 def _scheduler_loop() -> None:
+    # Self-update / plugin reload swaps the module behind the running thread.
+    # When that happens, every relative import in this loop raises
+    # ModuleNotFoundError ('_dispatcharr_plugin_twitcharr' is gone from
+    # sys.modules) and we'd spam the log forever. Bail out instead — the
+    # freshly loaded module starts its own scheduler in Plugin.__init__.
+    own_module = __name__
     logger.info("Twitcharr self-scheduler started")
     while not _scheduler_stop.is_set():
+        import sys
+        if own_module not in sys.modules:
+            logger.info("Twitcharr scheduler exiting: module %s was unloaded", own_module)
+            return
         try:
             _run_scheduled_tick()
+        except ImportError as exc:
+            logger.info("Twitcharr scheduler exiting after plugin reload: %s", exc)
+            return
         except Exception:
             logger.exception("Twitcharr scheduler tick failed")
         _scheduler_stop.wait(SCHEDULER_POLL_SECONDS)
@@ -1026,7 +1043,8 @@ def _stop_scheduler() -> bool:
         if not _scheduler_thread or not _scheduler_thread.is_alive():
             return False
         _scheduler_stop.set()
-        _scheduler_thread.join(timeout=5)
+        if _scheduler_thread is not threading.current_thread():
+            _scheduler_thread.join(timeout=5)
         return True
 
 
@@ -1062,7 +1080,7 @@ def _ensure_schedule_running() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = str(_MANIFEST.get("version") or "1.2.9")
+    version = str(_MANIFEST.get("version") or "1.2.11")
     description = (
         "Twitch Live TV for Dispatcharr with anonymous metadata, Streamlink "
         "playback, XMLTV guide data and channel sync. No Twitch sign-in required."
