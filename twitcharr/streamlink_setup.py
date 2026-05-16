@@ -10,6 +10,7 @@ actual live state.
 from __future__ import annotations
 
 import logging
+import os
 import shlex
 
 from django.db import transaction
@@ -22,69 +23,116 @@ logger = logging.getLogger(__name__)
 PROFILE_NAME = "Twitcharr (ad-free, low-latency)"
 OWNER_TAG = "twitcharr"
 LEGACY_PLACEHOLDER_TVG_ID = "twitch._placeholder_"
+MAX_DB_URL_LENGTH = 500
+MAX_STREAM_PROFILE_PARAMETERS = 500
+STREAMLINK_CONFIG_FILENAME = "twitcharr.streamlinkrc"
 
 
 # ---------------------------------------------------------------------------
 # Stream profile
 # ---------------------------------------------------------------------------
 
-def build_streamlink_parameters(
+def streamlink_config_path(data_dir: str) -> str:
+    return os.path.join(data_dir, STREAMLINK_CONFIG_FILENAME)
+
+
+def build_streamlink_config_lines(
     *,
     plugin_dirs: str,
     proxy_servers: str,
-    quality: str,
     low_latency: bool,
     fast_startup: bool = True,
-) -> str:
-    """Return the value for StreamProfile.parameters (shlex-quoted, single line).
+) -> list[str]:
+    """Return the long-lived Streamlink options written to the config file.
 
     `fast_startup=True` shaves the perceptual latency between channel-switch
     and first frame by being aggressive about retries and HLS playlist reloads.
-    Combined with adaptive quality (which already picks a variant your
-    bandwidth can sustain), the chosen quality is conservative enough that the
-    aggressive startup never causes mid-stream stutter.
     """
     base_http_timeout = "5" if fast_startup else "10"
     base_segment_timeout = "4" if fast_startup else "6"
     base_stream_timeout = "10" if fast_startup else "20"
     base_segment_attempts = "1" if fast_startup else "2"
 
-    parts: list[str] = [
-        "--loglevel", "warning",
-        "--stdout",
-        "--plugin-dir", plugin_dirs,
-        "--http-timeout", base_http_timeout,
-        "--stream-segment-attempts", base_segment_attempts,
-        "--stream-segment-timeout", base_segment_timeout,
-        "--stream-timeout", base_stream_timeout,
+    lines: list[str] = [
+        "loglevel=warning",
+        "stdout",
+        f"plugin-dir={plugin_dirs}",
+        f"http-timeout={base_http_timeout}",
+        f"stream-segment-attempts={base_segment_attempts}",
+        f"stream-segment-timeout={base_segment_timeout}",
+        f"stream-timeout={base_stream_timeout}",
         # Dispatcharr containers usually do not have a usable browser. With
         # ttv.lol playlist proxies, Streamlink does not need client-integrity.
-        "--webbrowser", "no",
-        "--twitch-disable-ads",
-        "--twitch-proxy-playlist-fallback",
-        "--twitch-access-token-param", "playerType=site",
-        "--twitch-access-token-param", "platform=web",
-        "--http-header", "User-Agent={userAgent}",
-        "--retry-streams", "1",
-        "--retry-max", "2",
+        "webbrowser=no",
+        "twitch-disable-ads",
+        "twitch-proxy-playlist-fallback",
+        "twitch-access-token-param=playerType=site",
+        "twitch-access-token-param=platform=web",
+        "http-header=User-Agent={userAgent}",
+        "retry-streams=1",
+        "retry-max=2",
     ]
     if fast_startup:
-        parts.extend([
-            "--hls-playlist-reload-attempts", "2",
-            "--hls-playlist-reload-time", "segment",
+        lines.extend([
+            "hls-playlist-reload-attempts=2",
+            "hls-playlist-reload-time=segment",
         ])
     if proxy_servers.strip():
-        parts.extend(["--twitch-proxy-playlist", proxy_servers.strip()])
+        lines.append(f"twitch-proxy-playlist={proxy_servers.strip()}")
     if low_latency:
-        parts.extend([
-            "--twitch-low-latency",
-            "--hls-live-edge", "1" if fast_startup else "2",
-            "--stream-segment-threads", "4" if fast_startup else "3",
-            "--hls-segment-stream-data",
+        lines.extend([
+            "twitch-low-latency",
+            f"hls-live-edge={1 if fast_startup else 2}",
+            f"stream-segment-threads={4 if fast_startup else 3}",
+            "hls-segment-stream-data",
         ])
-    parts.append("{streamUrl}")
-    parts.append(quality or "best")
-    return " ".join(shlex.quote(p) for p in parts)
+    return lines
+
+
+def _write_streamlink_config(
+    *,
+    data_dir: str,
+    plugin_dirs: str,
+    proxy_servers: str,
+    low_latency: bool,
+    fast_startup: bool,
+) -> str:
+    os.makedirs(data_dir, exist_ok=True)
+    path = streamlink_config_path(data_dir)
+    lines = build_streamlink_config_lines(
+        plugin_dirs=plugin_dirs,
+        proxy_servers=proxy_servers,
+        low_latency=low_latency,
+        fast_startup=fast_startup,
+    )
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+        f.write("\n")
+    os.replace(tmp, path)
+    return path
+
+
+def build_streamlink_parameters(
+    *,
+    config_path: str,
+    quality: str,
+) -> str:
+    """Return the short StreamProfile.parameters value stored in Dispatcharr."""
+    parts: list[str] = [
+        "--config", config_path,
+        # Dispatcharr substitutes this at playback time.
+        "{streamUrl}",
+        quality or "best",
+    ]
+    parameters = " ".join(shlex.quote(p) for p in parts)
+    if len(parameters) > MAX_STREAM_PROFILE_PARAMETERS:
+        raise ValueError(
+            "StreamProfile parameters are still too long for Dispatcharr "
+            f"({len(parameters)} > {MAX_STREAM_PROFILE_PARAMETERS}). "
+            "Use a shorter Twitcharr data directory."
+        )
+    return parameters
 
 
 def get_or_create_stream_profile(
@@ -98,13 +146,14 @@ def get_or_create_stream_profile(
     from core.models import StreamProfile
 
     plugin_dirs = ttvlol.plugin_dir(data_dir)
-    parameters = build_streamlink_parameters(
+    config_path = _write_streamlink_config(
+        data_dir=data_dir,
         plugin_dirs=plugin_dirs,
         proxy_servers=proxy_servers,
-        quality=quality,
         low_latency=low_latency,
         fast_startup=fast_startup,
     )
+    parameters = build_streamlink_parameters(config_path=config_path, quality=quality)
 
     profile, _ = StreamProfile.objects.update_or_create(
         name=PROFILE_NAME,
@@ -125,6 +174,7 @@ def get_or_create_stream_profile(
 def _logo_for(login: str, display_name: str, icon_url: str):
     from apps.channels.models import Logo
 
+    icon_url = _db_safe_url(icon_url)
     if not icon_url:
         return None
     logo, _ = Logo.objects.update_or_create(
@@ -132,6 +182,16 @@ def _logo_for(login: str, display_name: str, icon_url: str):
         defaults={"name": f"Twitch: {display_name or login}"},
     )
     return logo
+
+
+def _db_safe_url(url: str | None) -> str | None:
+    url = (url or "").strip()
+    if not url:
+        return None
+    if len(url) > MAX_DB_URL_LENGTH:
+        logger.warning("Skipping overlong logo URL for Dispatcharr DB (%d chars)", len(url))
+        return None
+    return url
 
 
 def _channel_group(name: str):
@@ -323,7 +383,7 @@ def sync_channels(
         stream_defaults = {
             "name": channel_name,
             "url": twitch_url,
-            "logo_url": e["icon_url"] or None,
+            "logo_url": _db_safe_url(e.get("icon_url")),
             "tvg_id": tvg,
             "stream_profile": profile,
             "is_custom": True,

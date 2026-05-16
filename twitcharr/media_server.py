@@ -13,6 +13,7 @@ The same code path works for:
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import requests
@@ -20,6 +21,8 @@ import requests
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 15
+IMAGE_WARM_TIMEOUT = 6
+IMAGE_WARM_LIMIT = 80
 GUIDE_TASK_KEY = "RefreshGuide"
 
 
@@ -38,6 +41,89 @@ def _normalize_url(url: str) -> str:
     if url and not url.lower().startswith(("http://", "https://")):
         url = "http://" + url
     return url
+
+
+def _extract_items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict):
+        items = payload.get("Items")
+        if isinstance(items, list):
+            return [i for i in items if isinstance(i, dict)]
+    if isinstance(payload, list):
+        return [i for i in payload if isinstance(i, dict)]
+    return []
+
+
+def _wait_for_task_idle(base: str, headers: dict[str, str], task_id: str, *, max_seconds: int = 12) -> bool:
+    deadline = time.time() + max_seconds
+    while time.time() < deadline:
+        try:
+            resp = requests.get(f"{base}/ScheduledTasks", headers=headers, timeout=DEFAULT_TIMEOUT)
+            if resp.status_code != 200:
+                return False
+            tasks = resp.json()
+        except Exception:
+            return False
+        task = next((t for t in tasks if t.get("Id") == task_id), None)
+        state = str((task or {}).get("State") or "").lower()
+        if state and state not in {"running", "cancelling"}:
+            return True
+        time.sleep(1)
+    return False
+
+
+def warm_live_tv_image_cache(*, base_url: str, api_key: str, max_images: int = IMAGE_WARM_LIMIT) -> dict[str, Any]:
+    """Ask Emby/Jellyfin for Live TV channel/program images so its cache fills sooner."""
+    base = _normalize_url(base_url)
+    key = (api_key or "").strip()
+    if not base or not key:
+        return {"status": "skipped", "message": "Emby/Jellyfin URL or API key not configured"}
+
+    headers = _headers(key)
+    session = requests.Session()
+    warmed = 0
+    failures = 0
+
+    endpoints = [
+        ("/LiveTv/Channels", {"EnableImages": "true", "ImageTypeLimit": "1", "Limit": str(max_images)}),
+        ("/LiveTv/Programs", {"EnableImages": "true", "ImageTypeLimit": "1", "Limit": str(max_images)}),
+    ]
+    item_ids: list[str] = []
+    for path, params in endpoints:
+        try:
+            resp = session.get(f"{base}{path}", headers=headers, params=params, timeout=DEFAULT_TIMEOUT)
+            if resp.status_code != 200:
+                failures += 1
+                continue
+            for item in _extract_items(resp.json()):
+                item_id = str(item.get("Id") or "").strip()
+                if item_id and item_id not in item_ids:
+                    item_ids.append(item_id)
+        except Exception:
+            logger.exception("Could not list %s for image-cache warmup", path)
+            failures += 1
+
+    for item_id in item_ids[:max_images]:
+        try:
+            resp = session.get(
+                f"{base}/Items/{item_id}/Images/Primary",
+                headers=headers,
+                params={"MaxWidth": "480", "Quality": "85"},
+                timeout=IMAGE_WARM_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                warmed += 1
+            elif resp.status_code not in (404, 204):
+                failures += 1
+        except Exception:
+            failures += 1
+
+    status = "ok" if warmed or not failures else "error"
+    return {
+        "status": status,
+        "message": f"Warmed {warmed} Live TV image cache entries",
+        "images_warmed": warmed,
+        "failures": failures,
+    }
 
 
 def trigger_guide_refresh(*, base_url: str, api_key: str) -> dict[str, Any]:
@@ -99,12 +185,18 @@ def trigger_guide_refresh(*, base_url: str, api_key: str) -> dict[str, Any]:
         return {"status": "error", "message": f"Trigger request failed: {exc}"}
 
     if run_resp.status_code in (200, 204):
+        _wait_for_task_idle(base, headers, task_id)
+        warmup = warm_live_tv_image_cache(base_url=base, api_key=key)
         logger.info("Triggered Emby/Jellyfin guide refresh on %s (task=%s)", base, task_id)
         return {
             "status": "ok",
-            "message": f"Triggered '{target.get('Name', 'Refresh Guide')}' on {base}",
+            "message": (
+                f"Triggered '{target.get('Name', 'Refresh Guide')}' on {base}; "
+                f"{warmup.get('message', 'image cache warmup checked')}."
+            ),
             "task_id": task_id,
             "task_name": target.get("Name", ""),
+            "image_cache": warmup,
         }
 
     return {

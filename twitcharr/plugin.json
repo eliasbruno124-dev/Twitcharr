@@ -1,6 +1,6 @@
 {
   "name": "Twitcharr",
-  "version": "1.2.13",
+  "version": "1.2.18",
   "description": "A polished Twitch Live TV lineup for Dispatcharr. Add channels or discovery rules, then sync channels, streams and XMLTV guide data using anonymous Twitch metadata only. No OAuth, Client ID, Client Secret or Twitch sign-in required.",
   "author": "eliasbruno124",
   "help_url": "https://github.com/eliasbruno124-dev/Dispatcharr-Twitch-EPG",
@@ -166,7 +166,7 @@
     {
       "id": "sync_channels",
       "label": "Sync channels",
-      "description": "Writes the current guide, then creates, updates or removes Twitcharr-managed channels and streams.",
+      "description": "Writes the current guide, creates or updates channels, links them to fresh EPG rows immediately and refreshes the media server.",
       "button_label": "Sync channels",
       "button_variant": "outline",
       "button_color": "blue"

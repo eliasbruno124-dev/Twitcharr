@@ -17,6 +17,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from django.db import transaction
 from django.utils import timezone as djtz
@@ -31,6 +32,7 @@ LIVE_PROGRAMME_HOURS = 24
 OFFLINE_PROGRAMME_HOURS = 24
 OFFLINE_PROGRAMME_START_BACKDATE_MINUTES = 5
 DESCRIPTION_SEPARATOR = "<br />"
+MAX_DB_URL_LENGTH = 500
 
 # Twitch's CDN preview URL for any live channel. The CDN refreshes the JPEG
 # every ~30s, but downstream caches (Dispatcharr → Emby → browser) hold the URL
@@ -42,6 +44,25 @@ def live_preview_url(login: str, *, width: int = 640, height: int = 360, cache_b
     url = LIVE_PREVIEW_URL.format(login=login.lower(), w=width, h=height)
     if cache_bust:
         url = f"{url}?ts={cache_bust}"
+    return url
+
+
+def _cache_bust_image_url(url: str, cache_bust: int = 0) -> str:
+    if not url or not cache_bust or url.startswith("data:"):
+        return url
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "twarr_ts"]
+    query.append(("twarr_ts", str(int(cache_bust))))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def _db_safe_url(url: str | None) -> str | None:
+    url = (url or "").strip()
+    if not url:
+        return None
+    if len(url) > MAX_DB_URL_LENGTH:
+        logger.warning("Skipping overlong image URL (%d chars, max %d)", len(url), MAX_DB_URL_LENGTH)
+        return None
     return url
 
 
@@ -176,6 +197,9 @@ def build_entries(
             else:
                 icon_url = ""
 
+            program_icon_url = _cache_bust_image_url(program_icon_url, cache_bust)
+            icon_url = _cache_bust_image_url(icon_url, cache_bust)
+
             stream_title = (s.title or "").strip()
             uptime_str = _format_uptime(s.started_at, datetime.now(timezone.utc))
             viewer_label = _viewer_label(s.viewer_count)
@@ -207,12 +231,15 @@ def build_entries(
             started_at = s.started_at
             viewers = s.viewer_count
         else:
-            # Use the bundled plugin assets directly for offline artwork.
-            icon_url = offline_icon
-            program_icon_url = offline_program_icon or icon_url
+            # Emby/Jellyfin handle normal Twitch image URLs much more reliably
+            # than inline SVG/data URLs in "Now playing" tiles. For offline
+            # streamers, use the Twitch profile image immediately instead of a
+            # custom placeholder that some clients render as broken artwork.
+            icon_url = _cache_bust_image_url(u.profile_image_url, cache_bust)
+            program_icon_url = icon_url
             game_name = ""
-            title = f"⚫ {u.display_name} (offline)"
-            channel_name = f"{u.display_name} (offline)"
+            title = f"⚫ {u.display_name}"
+            channel_name = u.display_name
             description_parts = [
                 "Status: Offline",
                 f"Link: https://twitch.tv/{login}",
@@ -357,7 +384,7 @@ def upsert_db(entries: list[dict], data_dir: str) -> dict:
             epg_source=source,
             defaults={
                 "name": e.get("channel_name") or e["display_name"],
-                "icon_url": e["icon_url"] or None,
+                "icon_url": _db_safe_url(e.get("icon_url")),
             },
         )
         epg_rows[tvg] = epg
@@ -438,4 +465,38 @@ def upsert_db(entries: list[dict], data_dir: str) -> dict:
         "programmes": len(new_programs),
         "linked_channels": linked_channels,
         "removed_stale": stale_count,
+    }
+
+
+@transaction.atomic
+def link_channels_to_epg(entries: list[dict], data_dir: str) -> dict:
+    """Immediately attach freshly-created Channel rows to Twitcharr EPGData."""
+    from apps.channels.models import Channel
+    from apps.epg.models import EPGData
+
+    source = get_or_create_epg_source(data_dir)
+    tvg_ids = [channel_tvg_id(e["login"]) for e in entries]
+    if not tvg_ids:
+        return {"linked_channels": 0, "checked_channels": 0}
+
+    epg_rows = {
+        row.tvg_id: row
+        for row in EPGData.objects.filter(epg_source=source, tvg_id__in=tvg_ids)
+    }
+    linked_channels = 0
+    for tvg, epg in epg_rows.items():
+        linked_channels += (
+            Channel.objects.filter(tvg_id=tvg)
+            .exclude(epg_data_id=epg.id)
+            .update(epg_data=epg)
+        )
+
+    if linked_channels:
+        source.last_message = f"Linked {linked_channels} channels to fresh Twitcharr guide data"
+        source.updated_at = djtz.now()
+        source.save(update_fields=["last_message", "updated_at"])
+
+    return {
+        "linked_channels": linked_channels,
+        "checked_channels": len(tvg_ids),
     }

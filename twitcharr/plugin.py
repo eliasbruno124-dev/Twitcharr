@@ -32,19 +32,19 @@ GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}"
 DONATE_URL = "https://paypal.me/eliasbruno124"
 
 OFFLINE_PROGRAM_SVG = (
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 36'>"
-    "<path fill='#18181b' d='M0 0h64v36H0z'/>"
-    "<path fill='#9146ff' d='M8 5h48v25H8z'/>"
-    "<path fill='#0e0e10' d='M11 8h42v17H11z'/>"
-    "<text x='32' y='21' text-anchor='middle' fill='#fff' font-size='8' font-family='Arial' font-weight='900'>OFFLINE</text>"
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 272 380'>"
+    "<path fill='#0e0e10' d='M0 0h272v380H0z'/>"
+    "<path fill='#9146ff' d='M46 62h180v188h-48l-36 36h-36v-36H46z'/>"
+    "<path fill='#18181b' d='M66 86h140v130h-72l-26 26v-26H66z'/>"
+    "<path fill='#fff' d='M86 116h84v24h-30v72h-28v-72H86zm96 0h22v78h-22z'/>"
     "</svg>"
 )
 OFFLINE_CHANNEL_SVG = (
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 64'>"
-    "<path fill='#18181b' d='M0 0h36v64H0z'/>"
-    "<circle cx='18' cy='18' r='11' fill='#9146ff'/>"
-    "<circle cx='18' cy='18' r='8' fill='#0e0e10'/>"
-    "<text x='18' y='41' text-anchor='middle' fill='#fff' font-size='5' font-family='Arial' font-weight='900'>OFFLINE</text>"
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 272 380'>"
+    "<path fill='#0e0e10' d='M0 0h272v380H0z'/>"
+    "<path fill='#9146ff' d='M46 62h180v188h-48l-36 36h-36v-36H46z'/>"
+    "<path fill='#18181b' d='M66 86h140v130h-72l-26 26v-26H66z'/>"
+    "<path fill='#fff' d='M86 116h84v24h-30v72h-28v-72H86zm96 0h22v78h-22z'/>"
     "</svg>"
 )
 SVG_DATA_SAFE = "/:=;'(),<>"
@@ -274,9 +274,9 @@ def _gather_entries(settings: dict, *, client=None):
     logins = _resolve_logins(settings, client)
     if not logins:
         return client, [], []
-    # Cache-bust the optional live preview URL once per minute so Dispatcharr /
-    # Emby actually re-fetches it instead of serving stale CDN cache.
-    cache_bust = int(time.time() // 60)
+    # Cache-bust image URLs per refresh cycle so Emby/Jellyfin do not keep
+    # showing stale channel/category/offline artwork after guide refreshes.
+    cache_bust = int(time.time())
     entries = epg.build_entries(
         client,
         logins,
@@ -413,6 +413,8 @@ def _run_refresh_epg(settings: dict, *, prebuilt=None) -> dict:
 
 
 def _run_sync_channels(settings: dict, *, prebuilt=None) -> dict:
+    from . import epg
+
     if prebuilt is None:
         client, logins, entries = _gather_entries(settings)
     else:
@@ -423,12 +425,17 @@ def _run_sync_channels(settings: dict, *, prebuilt=None) -> dict:
         return {"status": "error", "message": "No matching Twitch channels found."}
     guide_result = _write_lineup_guide(settings, entries)
     result = _sync_channels_from_entries(settings, entries)
+    epg_link = epg.link_channels_to_epg(entries, _data_dir(settings))
+    media_server_refresh = _trigger_media_server(settings)
     if not entries:
         result["message"] = "Nothing live right now. Offline channels pruned."
     return {
         "status": "ok",
         "channels_synced": len(result.get("channel_names") or []),
         "guide": guide_result,
+        "epg_link": epg_link,
+        "media_server_refresh": media_server_refresh,
+        "media_server_status": media_server_refresh.get("status"),
         **result,
     }
 
@@ -477,7 +484,7 @@ def _run_setup(settings: dict) -> dict:
             return result
         result["sync"] = _run_sync_channels(settings, prebuilt=prebuilt)
         result["epg"] = result["sync"].get("guide", {})
-        result["media_server_refresh"] = _trigger_media_server(settings)
+        result["media_server_refresh"] = result["sync"].get("media_server_refresh", {})
         result["message"] = "Setup complete. Channels, guide and media server refreshed."
         result["next"] = "Channels, guide and auto-updater are active."
     else:
@@ -506,15 +513,10 @@ def _run_all(settings: dict) -> dict:
             sync_result = _run_sync_channels(settings, prebuilt=prebuilt)
             out["steps"]["sync_channels"] = sync_result
             out["steps"]["refresh_epg"] = sync_result.get("guide", {})
+            out["steps"]["media_server"] = sync_result.get("media_server_refresh", {})
         except Exception as e:
             logger.exception("sync_channels failed")
             out["steps"]["sync_channels"] = {"status": "error", "message": str(e)}
-
-        try:
-            out["steps"]["media_server"] = _trigger_media_server(settings)
-        except Exception as e:
-            logger.exception("post-sync media-server refresh failed")
-            out["steps"]["media_server"] = {"status": "error", "message": str(e)}
 
     has_error = any(s.get("status") == "error" for s in out["steps"].values())
     out["status"] = "partial" if has_error else "ok"
@@ -945,14 +947,13 @@ def _run_scheduled_tick() -> None:
                 else:
                     prebuilt = _gather_entries(settings)
                     sync_result = _run_sync_channels(settings, prebuilt=prebuilt)
-                    media_result = _trigger_media_server(settings)
                     state = _load_schedule_state(settings)
                     state.update({
                         "last_epg_refresh": int(time.time()),
                         "last_epg_status": "ok",
                         "last_sync_result": sync_result,
                         "last_epg_result": sync_result.get("guide", {}),
-                        "last_media_server_refresh": media_result,
+                        "last_media_server_refresh": sync_result.get("media_server_refresh", {}),
                     })
                     _save_schedule_state(settings, state)
             except Exception as e:
@@ -1080,7 +1081,7 @@ def _ensure_schedule_running() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = str(_MANIFEST.get("version") or "1.2.13")
+    version = str(_MANIFEST.get("version") or "1.2.18")
     description = (
         "Twitch Live TV for Dispatcharr with anonymous metadata, Streamlink "
         "playback, XMLTV guide data and channel sync. No Twitch sign-in required."
