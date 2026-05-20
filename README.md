@@ -28,9 +28,6 @@ Built-in plugin artwork:
 
 ![Twitcharr plugin logo](twitcharr/logo.png)
 
-Plugin settings screenshot:
-
-![Plugin settings overview](docs/01-plugin-settings.png)
 
 ## Install
 
@@ -42,17 +39,9 @@ Plugin settings screenshot:
 4. Import the ZIP.
 5. Enable Twitcharr.
 
-### Copy Folder
-
-1. Copy `twitcharr/` into `/app/data/plugins/` inside the Dispatcharr container.
-2. Refresh the Dispatcharr plugin list.
-3. Enable Twitcharr.
 
 Dispatcharr reads `twitcharr/logo.png` automatically and shows it on the plugin card after the plugin list is refreshed or the imported ZIP is installed.
 
-Actions screenshot:
-
-![Plugin actions](docs/02-actions.png)
 
 ## Quick Setup
 
@@ -92,9 +81,6 @@ Twitcharr will refresh Twitch metadata, write XMLTV and EPG rows, sync Channels 
 
 Do not paste OAuth tokens, API keys or Twitch account credentials into the channel field. They are not used.
 
-Live TV grid screenshot:
-
-![Live channel grid](docs/03-channel-grid.png)
 
 ## Discovery Tokens
 
@@ -112,9 +98,6 @@ Live TV grid screenshot:
 
 For category or search names that contain commas, put the token on its own line.
 
-Guide detail screenshot:
-
-![EPG detail](docs/04-epg-detail.png)
 
 ## Important Settings
 
@@ -133,9 +116,6 @@ Guide detail screenshot:
 | Auto-apply plugin updates | on | Applies newer GitHub Releases automatically; reload/restart Dispatcharr afterwards. |
 | Data directory | `/app/data/plugins/twitcharr` | Stores XMLTV, scheduler state, Streamlink config and the downloaded Streamlink plugin. |
 
-Quality settings screenshot:
-
-![Quality and bandwidth settings](docs/05-settings-quality.png)
 
 ## Actions
 
@@ -152,18 +132,7 @@ Quality settings screenshot:
 | Update plugin | Checks GitHub Releases and applies the latest release. |
 | Uninstall | Removes managed Dispatcharr objects and triggers one Emby/Jellyfin guide refresh if configured. Plugin files and settings remain. |
 
-Health-check screenshot:
 
-![Health-check output](docs/06-health-check.png)
-
-## Offline Behavior
-
-`Show offline channels` controls real streamer channels:
-
-- ON: offline streamers stay visible with offline guide data.
-- OFF: offline streamers are removed during sync and recreated when they go live.
-
-When no configured channel is included in the current lineup, Twitcharr removes the managed channels instead of creating a placeholder channel.
 
 ## EPG And Images
 
@@ -198,9 +167,7 @@ Twitcharr keeps artwork URLs stored in Dispatcharr database fields short enough 
 | Emby/Jellyfin does not update | Set both server URL and media-server token, then run **Refresh media server**. |
 | Stuttering | Run **Measure bandwidth** or increase the safety margin. |
 
-Self-update screenshot:
 
-![Self-update flow](docs/08-self-update.png)
 
 ## Donate
 
