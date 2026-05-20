@@ -4,7 +4,6 @@ Twitcharr is a Twitch live-TV plugin for [Dispatcharr](https://github.com/Dispat
 
 No Twitch account login, OAuth token, API key, Client ID or Client Secret is required. Twitch metadata is fetched anonymously through Twitch's public web GraphQL endpoint.
 
-Important: Twitcharr can download and use the third-party [`streamlink-ttvlol`](https://github.com/2bc4/streamlink-ttvlol) Streamlink plugin. The author is not affiliated with Twitch, Dispatcharr, streamlink-ttvlol or any proxy operator. Use at your own risk and follow the rules that apply to your setup.
 
 ## What Works
 
