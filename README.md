@@ -40,9 +40,6 @@ Built-in plugin artwork:
 5. Enable Twitcharr.
 
 
-Dispatcharr reads `twitcharr/logo.png` automatically and shows it on the plugin card after the plugin list is refreshed or the imported ZIP is installed.
-
-
 ## Quick Setup
 
 Open the Twitcharr plugin settings and fill **Twitch channels / discovery**.
