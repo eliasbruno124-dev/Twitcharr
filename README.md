@@ -169,11 +169,20 @@ Twitcharr keeps artwork URLs stored in Dispatcharr database fields short enough 
 
 
 
-## Donate
+## License
 
-[![Donate with PayPal](https://www.paypalobjects.com/en_US/i/btn/btn_donate_LG.gif)](https://paypal.me/eliasbruno124)
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
-PayPal: [paypal.me/eliasbruno124](https://paypal.me/eliasbruno124)
+## Support the Developer
+
+This plugin is free and open-source, maintained with a lot of love in my spare time. If it brings value to your Emby setup, a small donation would mean the world to me.
+
+<p align="center">
+  <a href="https://paypal.me/eliasbruno123">
+    <img src="https://img.shields.io/badge/Donate%20with-PayPal-0070BA?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate with PayPal">
+  </a>
+</p>
+
 
 ## Sources
 
