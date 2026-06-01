@@ -1,191 +1,221 @@
 # Twitcharr
 
-Twitcharr is a Twitch live-TV plugin for [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr). It creates Dispatcharr Channels, Streams and XMLTV guide data from Twitch channel names or discovery tokens.
+Twitcharr is a Twitch live-TV plugin for [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr).
+It turns Twitch channel names, Twitch URLs, and a few discovery tokens into managed
+Dispatcharr Channels, Streams, StreamProfile entries, and guide data.
 
-No Twitch account login, OAuth token, API key, Client ID or Client Secret is required. Twitch metadata is fetched anonymously through Twitch's public web GraphQL endpoint.
+No Twitch login, OAuth token, Client ID, Client Secret, or Twitch API key is used.
+Twitcharr reads public Twitch web metadata anonymously. Playback still depends on
+Streamlink inside the Dispatcharr container, and Twitch or proxy changes can break
+individual streams.
 
+Twitcharr can download the third-party
+[`streamlink-ttvlol`](https://github.com/2bc4/streamlink-ttvlol) Streamlink plugin
+and use configured ttv.lol playlist proxies. This is optional, third-party
+infrastructure. The author is not affiliated with Twitch, Dispatcharr, Streamlink,
+streamlink-ttvlol, or any proxy operator.
 
-## What Works
+## What It Actually Does
 
-| Feature | Status |
+| Area | Current behavior |
 |---|---|
-| Twitch channel input | Channel names can be separated by commas or line breaks. Twitch URLs also work. |
-| Discovery tokens | Supports `top`, `top:de:25`, `game:Just Chatting:10` and `search:gronkh`. |
-| Dispatcharr objects | Creates and updates managed Channels, Streams, StreamProfile and EPG rows. |
-| XMLTV | Writes `<data_dir>/twitch.xmltv`. |
-| Instant guide link | New or changed Channels are linked to freshly written Twitcharr EPG rows in the same sync cycle. |
-| Plugin logo | Includes `logo.png` so Twitcharr has its own icon on the Dispatcharr plugin card. |
-| Offline handling | Can keep offline channels or remove offline channels while they are offline. |
-| Offline artwork | Uses Twitch profile images for offline streamers and shows offline guide tiles as `⚫ Offline`. |
-| DB-safe artwork URLs | Keeps Dispatcharr Logo and EPG icon URLs below the 500-character database limit. |
-| Adaptive quality | Measures bandwidth and updates the Streamlink quality fallback chain. |
-| Short StreamProfile parameters | Stores long Streamlink options in `<data_dir>/twitcharr.streamlinkrc` so Dispatcharr's 500-character parameter field is not exceeded. |
-| ttv.lol update | Downloads the latest `twitch.py` for Streamlink when requested or scheduled. |
-| Emby / Jellyfin | Triggers the server's Refresh Guide task after scheduled EPG refreshes if URL and media-server token are configured. |
-| Diagnostics | Includes proxy and bandwidth checks. |
+| Channel input | Accepts Twitch login names and Twitch URLs, separated by commas, semicolons, or line breaks. |
+| Discovery | Supports `top`, `top:25`, `top:de:25`, `top:de,en:50`, `game:Just Chatting:10`, and `search:gronkh:5`. |
+| Dispatcharr objects | Creates and updates Twitcharr-owned Channels, Streams, a Channel Group, an EPG source, and one StreamProfile. |
+| Guide data | Writes Dispatcharr `EPGData` / `ProgramData` rows and `<data_dir>/twitch.xmltv`. |
+| Stream playback | Creates Streamlink commands that open `https://twitch.tv/<login>` through Dispatcharr. Streamlink must already be installed. |
+| Streamlink config | Writes long Streamlink options to `<data_dir>/twitcharr.streamlinkrc` so Dispatcharr's StreamProfile parameter field stays short. |
+| ttv.lol | Downloads or refreshes `twitch.py` from streamlink-ttvlol when requested and during scheduled checks. |
+| Offline channels | Can keep offline configured channels in the lineup or prune them until they are live again. |
+| Images | Uses Twitch category artwork for live entries when available, and Twitch profile images for offline entries. |
+| Media servers | Can trigger the Emby/Jellyfin `Refresh Guide` scheduled task when URL and API key are configured. |
+| Diagnostics | Provides proxy reachability and bandwidth measurement actions. There is no separate full health-check action in the plugin UI. |
+| Self-update | Checks GitHub releases every 6 hours when enabled and can apply newer plugin releases. Reload plugins or restart Dispatcharr afterwards. |
 
-Built-in plugin artwork:
+## What It Does Not Do
 
-![Twitcharr plugin logo](twitcharr/logo.png)
-
+- It does not include or install Streamlink itself.
+- It does not guarantee ad-free playback. It enables Streamlink Twitch options and can use ttv.lol proxies, but Twitch/proxy behavior is outside this plugin's control.
+- It does not use official Twitch API credentials.
+- It does not transcode video or burn guide data into video streams.
+- It does not create a public M3U endpoint. It manages Dispatcharr database objects directly and writes XMLTV to disk.
+- It does not make Emby/Jellyfin update instantly by itself. It only triggers their guide refresh task when configured.
+- It does not ship screenshots in this repository right now.
 
 ## Install
 
 ### Import ZIP
 
-1. Zip the `twitcharr/` folder, or use `twitcharr.zip` from this repository.
+1. Use `twitcharr.zip` from this repository, or zip the `twitcharr/` folder yourself.
 2. Open Dispatcharr.
 3. Go to Plugins.
 4. Import the ZIP.
 5. Enable Twitcharr.
 
+### Manual Copy
+
+Copy the `twitcharr/` plugin folder into Dispatcharr's plugin-code directory and
+refresh the plugin list. In current Dispatcharr containers this is usually:
+
+```text
+/data/plugins/twitcharr
+```
+
+Do not confuse that plugin-code path with Twitcharr's `data_dir`. The default
+`data_dir` is:
+
+```text
+/app/data/plugins/twitcharr
+```
+
+That data directory stores XMLTV output, scheduler state, Streamlink config, and
+the downloaded streamlink-ttvlol file.
 
 ## Quick Setup
 
-Open the Twitcharr plugin settings and fill **Twitch channels / discovery**.
+Open the Twitcharr plugin settings and fill **Twitch channels and discovery**.
 
-Comma-separated channel names:
+Examples:
 
 ```text
 gronkh, papaplatte, knossi
-```
-
-Line-separated channel names:
-
-```text
-gronkh
-papaplatte
-knossi
-```
-
-Twitch URLs:
-
-```text
 https://www.twitch.tv/gronkh
-```
-
-Discovery tokens:
-
-```text
 top:de:25
 game:Just Chatting:10
-search:trymacs
+search:trymacs:5
 ```
 
 Then click **Sync now**.
 
-Twitcharr will refresh Twitch metadata, write XMLTV and EPG rows, sync Channels and Streams, update the StreamProfile and start the scheduler if enabled.
+`Sync now` creates or updates the StreamProfile, EPG source, guide rows, Channels,
+Streams, and the background scheduler. If no Twitch channels are configured, setup
+still prepares the StreamProfile, EPG source, ttv.lol file, and scheduler.
 
-Do not paste OAuth tokens, API keys or Twitch account credentials into the channel field. They are not used.
-
+Do not paste OAuth tokens, Client IDs, API keys, or Twitch account credentials into
+the channel field. Twitcharr ignores those and reports a settings error for obvious
+credential-looking input.
 
 ## Discovery Tokens
 
 | Token | Meaning |
 |---|---|
-| `gronkh` | Adds one channel by channel name. |
+| `gronkh` | Adds one channel by login name. |
+| `https://www.twitch.tv/gronkh` | Adds one channel from a Twitch URL. |
 | `top` | Adds the top 10 live streams globally. |
 | `top:25` | Adds the top 25 live streams globally. |
 | `top:de:25` | Adds the top 25 German-language live streams. |
-| `top:de,en:50` | Adds the top 50 streams in German or English. |
-| `game:Just Chatting` | Adds the top 10 streams in that category. |
-| `game:Just Chatting:25` | Adds the top 25 streams in that category. |
+| `top:de,en:50` | Adds the top 50 German- or English-language live streams. |
+| `game:Just Chatting` | Adds the top 10 live streams in that category. |
+| `game:Just Chatting:25` | Adds the top 25 live streams in that category. |
 | `search:gronkh` | Adds the first 10 channel-search results. |
 | `search:cooking:5` | Adds the first 5 channel-search results. |
 
-For category or search names that contain commas, put the token on its own line.
+Category and search names with commas are ambiguous in a free-text field. Put
+those tokens on their own line.
 
+## Settings
 
-## Important Settings
-
-| Setting | Default | What it does |
+| Setting | Default | Actual behavior |
 |---|---|---|
-| Twitch channels / discovery | empty | Channel names, URLs or discovery tokens. Commas and line breaks are accepted. |
-| Stream quality | `adaptive` | Builds a Streamlink quality fallback chain from measured or manual bandwidth. |
-| Connection bandwidth (Mbps) | `0` | `0` uses the last measured value or a conservative fallback. |
-| Bandwidth safety margin (%) | `50` | Extra headroom used by adaptive quality. |
-| Show offline channels | on | Keeps offline streamers in the lineup. Turn off to prune them while offline. |
-| EPG refresh interval | `2` minutes | Scheduler interval for Twitch status and guide refresh. |
-| ttv.lol proxy servers | EU defaults | Comma-separated proxy playlist URLs. Clear to disable. |
+| Twitch channels and discovery | empty | Login names, Twitch URLs, or discovery tokens. |
+| Channel group | `Twitch` | Channel group used for Twitcharr-managed Channels. |
+| Starting channel number | `9000` | First number used for new Twitcharr Channels. Existing Twitcharr channel numbers are kept stable when possible. |
+| Stream quality | `adaptive` | Fixed values are passed to Streamlink. `adaptive` builds a fallback chain from bandwidth settings. |
+| Connection bandwidth (Mbps) | `0` | `0` uses the last measured bandwidth value, or the plugin's conservative fallback. |
+| Bandwidth safety margin (%) | `50` | Extra headroom used by adaptive quality. Values are clamped to the supported range. |
+| Fastest possible startup | on | Uses shorter Streamlink timeouts and more aggressive HLS startup options. |
+| Low-latency mode | on | Enables Streamlink's Twitch low-latency options. |
+| Show offline channels | on | Keeps offline configured channels in the lineup with offline guide data. Off means offline channels are pruned during sync. |
+| EPG refresh interval | `2` minutes | Background scheduler interval for Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV. Minimum is 1 minute. |
+| ttv.lol proxy servers | EU defaults | Comma-separated proxy playlist URLs passed to Streamlink. Empty disables proxy playlist use. |
 | Emby / Jellyfin URL | empty | Optional media-server base URL. |
-| Emby / Jellyfin access token | empty | Optional media-server token for Emby/Jellyfin only. This is not a Twitch key. |
-| Auto-check for plugin updates | on | Checks GitHub Releases every 6 hours. |
-| Auto-apply plugin updates | on | Applies newer GitHub Releases automatically; reload/restart Dispatcharr afterwards. |
-| Data directory | `/app/data/plugins/twitcharr` | Stores XMLTV, scheduler state, Streamlink config and the downloaded Streamlink plugin. |
-
+| Emby / Jellyfin API key | empty | API key for Emby/Jellyfin guide refresh only. This is not a Twitch key. |
+| Auto-check for plugin updates | on | Checks GitHub latest release every 6 hours. |
+| Auto-apply plugin updates | on | Applies a newer GitHub release automatically, then requires plugin reload or container restart. |
+| Data directory | `/app/data/plugins/twitcharr` | Stores XMLTV, scheduler state, Streamlink config, and downloaded streamlink-ttvlol plugin. |
 
 ## Actions
 
-| Action | Use it for |
+| Action | Actual behavior |
 |---|---|
-| Sync now | Full setup and refresh. |
-| Refresh guide | Refresh Twitch status, XMLTV and EPG rows. |
-| Sync channels | Writes current guide rows first, creates or updates Channels and Streams, links EPG immediately and refreshes Emby/Jellyfin if configured. |
-| Full refresh | ttv.lol check, channel sync and guide refresh. |
-| Test proxies | Proxy HTTP status and latency. |
-| Measure bandwidth | Runs quick download probes, saves Mbps and updates adaptive quality. |
-| Refresh media server | Triggers Emby/Jellyfin Refresh Guide. |
-| Update ttv.lol | Forces a fresh `twitch.py` download. |
-| Update plugin | Checks GitHub Releases and applies the latest release. |
-| Uninstall | Removes managed Dispatcharr objects and triggers one Emby/Jellyfin guide refresh if configured. Plugin files and settings remain. |
+| Sync now | Updates ttv.lol if needed, creates StreamProfile and EPG source, resolves Twitch inputs, writes guide data, syncs Channels/Streams, starts scheduler, and refreshes Emby/Jellyfin if configured. |
+| Refresh guide | Resolves Twitch inputs, writes XMLTV plus Dispatcharr EPG rows, opportunistically checks ttv.lol freshness, and refreshes Emby/Jellyfin if configured. |
+| Sync channels | Writes guide data, creates or updates Channels/Streams, links Channels to fresh EPG rows, prunes stale Twitcharr-owned Channels/Streams, and refreshes Emby/Jellyfin if configured. |
+| Full refresh | Runs ttv.lol update check, resolves Twitch inputs once, syncs Channels/Streams, writes guide data, and refreshes Emby/Jellyfin if configured. |
+| Measure bandwidth | Downloads a small Cloudflare speed-test payload, saves the measured Mbps value, recalculates adaptive quality, and updates the StreamProfile. |
+| Test proxies | Tests configured ttv.lol proxy URLs and reports reachability, HTTP status, and latency. |
+| Refresh Emby / Jellyfin | Triggers the configured server's `Refresh Guide` task. |
+| Update ttv.lol | Checks GitHub and downloads the streamlink-ttvlol `twitch.py` file when changed. |
+| Update plugin | Downloads and applies a newer Twitcharr GitHub release when available. Reload plugins or restart Dispatcharr afterwards. |
+| Uninstall | Deletes Twitcharr-managed Channels, Streams, StreamProfile, and EPG source rows, then refreshes Emby/Jellyfin if configured. Plugin files and settings remain. |
 
+## Scheduler
 
+When the plugin module is loaded, Twitcharr starts an in-process background
+scheduler. `Sync now` also ensures it is running.
 
-## EPG And Images
+The scheduler:
 
-Twitcharr does not burn guide data into the video stream. That would require video overlays or transcoding and would make the stream worse.
+- refreshes Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV according to `EPG refresh interval`
+- skips guide syncs when no Twitch input is configured
+- updates ttv.lol once per server-local day after midnight
+- checks GitHub releases every 6 hours when auto-check is enabled
+- applies newer plugin releases only when auto-apply is enabled
 
-Instead it writes guide data where TV clients expect it:
+## Offline Behavior
+
+`Show offline channels` controls configured streamer channels:
+
+- On: offline streamers stay in the Dispatcharr lineup with offline guide data.
+- Off: offline streamers are removed during sync and recreated when they are live again.
+
+If `Show offline channels` is off and nobody in the configured lineup is live,
+Twitcharr prunes its managed Channels/Streams instead of creating a placeholder
+channel.
+
+## Guide And Images
+
+Twitcharr writes guide data where Dispatcharr and TV clients expect it:
 
 - Dispatcharr `EPGData` and `ProgramData` rows
 - `<data_dir>/twitch.xmltv`
-- channel icons, using current game/category artwork for live streams
-- programme icons in XMLTV, using category/game artwork when an icon is available
-- rich programme titles with streamer, category and current Twitch viewer count
-- Twitch profile images for offline streamers, with offline guide tiles named `⚫ Offline`
+- channel icons from Twitch category artwork when live, falling back to Twitch profile images
+- programme icons from Twitch category artwork when available
+- programme titles with streamer, category, and viewer count for live streams
+- offline programme title `⚫ Offline` with Twitch profile artwork for offline streamers
 
-For Emby and Jellyfin, the plugin triggers the server's Refresh Guide task after scheduled EPG refreshes. That is still required because those servers cache Live TV guide data.
+Twitcharr also avoids storing image URLs longer than Dispatcharr's 500-character
+database fields.
 
-Channel syncs also link freshly-created Dispatcharr Channels to the current Twitcharr EPG rows immediately, then trigger the media-server guide refresh and warm Live TV image cache entries.
-
-Twitcharr keeps artwork URLs stored in Dispatcharr database fields short enough for Dispatcharr's 500-character URL columns. Offline streamers use their Twitch profile image because Emby/Jellyfin render those thumbnails more reliably in Live TV tiles; the guide title carries the `⚫ Offline` state.
+For Emby and Jellyfin, Twitcharr only triggers `Refresh Guide`. Those servers
+still control their own caching and display timing.
 
 ## Troubleshooting
 
-| Problem | What to try |
+| Problem | What to check |
 |---|---|
-| No channels appear | Check channel names, then run **Sync now**. |
-| OAuth/API-key confusion | Remove Twitch OAuth/API-key text from the channel field. Twitcharr does not need Twitch credentials. |
+| No channels appear | Add valid channel names or discovery tokens, then run **Sync now**. |
+| OAuth/API-key confusion | Remove Twitch credentials from the channel field. Twitcharr does not use Twitch credentials. |
 | Offline channels do not disappear | Turn **Show offline channels** off, then run **Sync channels**. |
-| Streams do not start | Run **Update ttv.lol** and **Test proxies**. Twitcharr disables Streamlink's browser flow and relies on ttv.lol playlist proxies for restricted streams. |
-| `streamlink` is missing | Install Streamlink in the Dispatcharr container. |
-| Guide looks stale | Run **Refresh guide**. |
-| Offline image is broken in Emby/Jellyfin | Run **Sync channels** and **Refresh media server** so the Twitch profile-image URLs are regenerated. |
-| Emby/Jellyfin does not update | Set both server URL and media-server token, then run **Refresh media server**. |
-| Stuttering | Run **Measure bandwidth** or increase the safety margin. |
-
-
-
-## License
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
-
-## Support the Developer
-
-This plugin is free and open-source, maintained with a lot of love in my spare time. If it brings value to your Emby setup, a small donation would mean the world to me.
-
-<p align="center">
-  <a href="https://paypal.me/eliasbruno123">
-    <img src="https://img.shields.io/badge/Donate%20with-PayPal-0070BA?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate with PayPal">
-  </a>
-</p>
-
+| Streams do not start | Confirm Streamlink exists in the Dispatcharr container, then run **Update ttv.lol** and **Test proxies**. |
+| Proxy playback is unreliable | Remove dead proxies, reorder the list, or clear the proxy field to stop passing proxy playlist URLs to Streamlink. |
+| Guide looks stale | Run **Refresh guide** or **Sync channels**. For Emby/Jellyfin, also run **Refresh Emby / Jellyfin**. |
+| Emby/Jellyfin does not update | Set both media-server URL and API key, then run **Refresh Emby / Jellyfin**. |
+| Adaptive quality is too high or too low | Run **Measure bandwidth**, set a manual bandwidth value, or adjust the safety margin. |
+| Plugin update applied but code did not change | Reload Dispatcharr plugins or restart the Dispatcharr container. |
 
 ## Sources
 
 - [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr)
 - [streamlink-ttvlol](https://github.com/2bc4/streamlink-ttvlol)
-- [twitch2tuner](https://github.com/micahmo/twitch2tuner)
 - [Streamlink plugin sideloading](https://streamlink.github.io/latest/cli/plugin-sideloading.html)
 - [Streamlink Twitch plugin docs](https://streamlink.github.io/latest/cli/plugins/twitch.html)
 - [Jellyfin Scheduled Tasks API](https://api.jellyfin.org/#tag/ScheduledTasks)
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+## Donate
+
+[paypal.me/eliasbruno124](https://paypal.me/eliasbruno124)
