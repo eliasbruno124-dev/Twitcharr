@@ -11,9 +11,7 @@ individual streams.
 
 Twitcharr can download the third-party
 [`streamlink-ttvlol`](https://github.com/2bc4/streamlink-ttvlol) Streamlink plugin
-and use configured ttv.lol playlist proxies. This is optional, third-party
-infrastructure. The author is not affiliated with Twitch, Dispatcharr, Streamlink,
-streamlink-ttvlol, or any proxy operator.
+and use configured ttv.lol playlist proxies.
 
 ## What It Actually Does
 
@@ -32,16 +30,6 @@ streamlink-ttvlol, or any proxy operator.
 | Diagnostics | Provides proxy reachability and bandwidth measurement actions. There is no separate full health-check action in the plugin UI. |
 | Plugin update | Provides a manual **Update plugin** action for newer Twitcharr GitHub releases. Reload plugins or restart Dispatcharr afterwards. |
 
-## What It Does Not Do
-
-- It does not include or install Streamlink itself.
-- It does not guarantee ad-free playback. It enables Streamlink Twitch options and can use ttv.lol proxies, but Twitch/proxy behavior is outside this plugin's control.
-- It does not use official Twitch API credentials.
-- It does not transcode video or burn guide data into video streams.
-- It does not create a public M3U endpoint. It manages Dispatcharr database objects directly and writes XMLTV to disk.
-- It does not make Emby/Jellyfin update instantly by itself. It only triggers their guide refresh task when configured.
-- It does not automatically update Twitcharr itself in the background. ttv.lol still has its own scheduled refresh.
-- It does not ship screenshots in this repository right now.
 
 ## Install
 
@@ -62,15 +50,6 @@ refresh the plugin list. In current Dispatcharr containers this is usually:
 /data/plugins/twitcharr
 ```
 
-Do not confuse that plugin-code path with Twitcharr's `data_dir`. The default
-`data_dir` is:
-
-```text
-/app/data/plugins/twitcharr
-```
-
-That data directory stores XMLTV output, scheduler state, Streamlink config, and
-the downloaded streamlink-ttvlol file.
 
 ## Quick Setup
 
@@ -121,7 +100,6 @@ those tokens on their own line.
 | Twitch channels and discovery | empty | Login names, Twitch URLs, or discovery tokens. |
 | Channel group | `Twitch` | Channel group used for Twitcharr-managed Channels. |
 | Starting channel number | `9000` | First number used for new Twitcharr Channels. Existing Twitcharr channel numbers are kept stable when possible. |
-| Stream quality | `adaptive` | Fixed values are passed to Streamlink. `adaptive` builds a fallback chain from bandwidth settings. |
 | Connection bandwidth (Mbps) | `0` | `0` uses the last measured bandwidth value, or the plugin's conservative fallback. |
 | Bandwidth safety margin (%) | `50` | Extra headroom used by adaptive quality. Values are clamped to the supported range. |
 | Fastest possible startup | `true` | Uses shorter Streamlink timeouts and more aggressive HLS startup options. |
@@ -145,7 +123,6 @@ those tokens on their own line.
 | Test proxies | Tests configured ttv.lol proxy URLs and reports reachability, HTTP status, and latency. |
 | Refresh Emby / Jellyfin | Triggers the configured server's `Refresh Guide` task. |
 | Update ttv.lol | Checks GitHub and downloads the streamlink-ttvlol `twitch.py` file when changed. |
-| Update plugin | Downloads and applies a newer Twitcharr GitHub release when available. Reload plugins or restart Dispatcharr afterwards. |
 | Uninstall | Deletes Twitcharr-managed Channels, Streams, StreamProfile, and EPG source rows, then refreshes Emby/Jellyfin if configured. Plugin files and settings remain. |
 
 ## Scheduler
