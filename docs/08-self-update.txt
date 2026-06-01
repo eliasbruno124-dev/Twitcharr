@@ -1,11 +1,11 @@
 FILENAME: 08-self-update.png
 
-Capture Check for plugin update or Apply plugin update.
+Capture the manual Apply plugin update action result.
 
 Show:
 - current_version
 - latest_version
-- update_available or applied
+- applied
 - release_url
 
-Current plugin version target: 1.2.1.
+Current plugin version target: 1.2.25.

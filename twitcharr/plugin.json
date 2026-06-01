@@ -1,6 +1,6 @@
 {
   "name": "Twitcharr",
-  "version": "1.2.24",
+  "version": "1.2.25",
   "description": "A polished Twitch Live TV lineup for Dispatcharr. Add channels or discovery rules, then sync channels, streams and XMLTV guide data using anonymous Twitch metadata only. No OAuth, Client ID, Client Secret or Twitch sign-in required.",
   "author": "eliasbruno124",
   "help_url": "https://github.com/eliasbruno124-dev/Dispatcharr-Twitch-EPG",
@@ -26,7 +26,7 @@
       "label": "Starting channel number",
       "type": "number",
       "default": 9000,
-      "description": "First channel number used for the Twitcharr lineup. Existing Twitcharr channels are renumbered on every sync."
+      "description": "First channel number used for new Twitcharr channels. Existing Twitcharr channel numbers are kept stable when possible."
     },
     {
       "id": "stream_quality",
@@ -68,8 +68,8 @@
       "id": "include_offline",
       "label": "Show offline channels",
       "type": "boolean",
-      "default": true,
-      "description": "Keep offline streamers in the lineup with the offline tile. When disabled, offline channels are removed and recreated when they go live."
+      "default": false,
+      "description": "Keep offline streamers in the lineup. When disabled, offline channels are removed and recreated when they go live."
     },
     {
       "id": "epg_refresh_interval_minutes",
@@ -101,20 +101,6 @@
       "default": "",
       "placeholder": "abcdef0123456789...",
       "description": "Required when an Emby or Jellyfin URL is set. This is your media-server API key, not a Twitch token."
-    },
-    {
-      "id": "auto_check_updates",
-      "label": "Auto-check for plugin updates",
-      "type": "boolean",
-      "default": true,
-      "description": "Checks GitHub for new Twitcharr releases every 6 hours."
-    },
-    {
-      "id": "auto_apply_updates",
-      "label": "Auto-apply plugin updates",
-      "type": "boolean",
-      "default": true,
-      "description": "Automatically downloads and applies new Twitcharr releases. Reload plugins after an update is applied."
     },
     {
       "id": "data_dir",

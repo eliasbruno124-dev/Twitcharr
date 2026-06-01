@@ -1,12 +1,12 @@
 """Twitcharr — Twitch live-TV plugin for Dispatcharr.
 
 Combines:
-  * an auto-updated streamlink-ttvlol twitch.py for ad-bypass low-latency playback
+  * an auto-updated streamlink-ttvlol twitch.py for proxy-aware low-latency playback
   * a continuously refreshed XMLTV guide (twitch2tuner-style)
   * direct Channel/Stream/EPGData rows in Dispatcharr — no manual M3U/EPG setup
   * Twitch channel discovery (game/top/search) directly inside the lineup field
   * Emby/Jellyfin guide refresh on every EPG cycle
-  * a built-in self-updater that pulls new releases from GitHub
+  * a manual self-update action that pulls new releases from GitHub
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "channel_group_name": "Twitch",
     "starting_channel_number": 9000,
     "data_dir": "/app/data/plugins/twitcharr",
-    "include_offline": True,
+    "include_offline": False,
     "epg_refresh_interval_minutes": 2,
     "ttvlol_proxy_servers": DEFAULT_TTVLOL_PROXY_SERVERS,
     "stream_quality": "adaptive",
@@ -52,8 +52,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "enable_low_latency": True,
     "media_server_url": "",
     "media_server_api_key": "",
-    "auto_check_updates": True,
-    "auto_apply_updates": True,
     "fast_startup": True,
 }
 
@@ -248,7 +246,7 @@ def _gather_entries(settings: dict, *, client=None):
     entries = epg.build_entries(
         client,
         logins,
-        include_offline=_bool_setting(settings, "include_offline", True),
+        include_offline=_bool_setting(settings, "include_offline", False),
         offline_icon_url=_offline_icon_url(settings, cache_bust=cache_bust),
         offline_program_icon_url=_offline_program_icon_url(settings, cache_bust=cache_bust),
         use_live_thumbnails=False,
@@ -704,15 +702,6 @@ def _current_version() -> str:
     return Plugin.version  # mirrored by the class below
 
 
-def _run_check_updates(settings: dict) -> dict:
-    from . import self_update
-
-    return self_update.check_for_update(
-        current_version=_current_version(),
-        data_dir=_data_dir(settings),
-    )
-
-
 def _run_apply_update(settings: dict) -> dict:
     from . import self_update
 
@@ -752,7 +741,6 @@ def _run_uninstall(settings: dict) -> dict:
 LEGACY_EPG_TASK_NAME = "twitcharr__refresh_epg"
 LEGACY_TTVLOL_TASK_NAME = "twitcharr__update_ttvlol"
 SCHEDULER_POLL_SECONDS = 30
-UPDATE_CHECK_INTERVAL_SECONDS = 6 * 3600  # check GitHub every 6h
 
 _scheduler_lock = threading.RLock()
 _scheduler_stop = threading.Event()
@@ -838,17 +826,6 @@ def _epg_due(settings: dict, state: dict, now: float) -> bool:
     return now - last >= _interval_minutes(settings) * 60
 
 
-def _update_check_due(settings: dict, state: dict, now: float) -> bool:
-    if not _bool_setting(settings, "auto_check_updates", True):
-        return False
-    last = float(state.get("last_update_check") or 0)
-    return now - last >= UPDATE_CHECK_INTERVAL_SECONDS
-
-
-def _auto_apply_updates_enabled(settings: dict) -> bool:
-    return _bool_setting(settings, "auto_apply_updates", True)
-
-
 def _settings_have_twitch_inputs(settings: dict) -> bool:
     return bool(_text_setting(settings, "channels"))
 
@@ -919,37 +896,6 @@ def _run_scheduled_tick() -> None:
                 _save_schedule_state(settings, state)
             finally:
                 _release_job_lock(lock)
-
-    if _update_check_due(settings, state, now):
-        try:
-            check = _run_check_updates(settings)
-            apply_result = None
-            latest_version = check.get("latest_version")
-            previous_auto = state.get("auto_update_result") or {}
-            already_applied = (
-                previous_auto.get("applied")
-                and latest_version
-                and previous_auto.get("latest_version") == latest_version
-            )
-            if (
-                check.get("status") == "ok"
-                and check.get("update_available")
-                and _auto_apply_updates_enabled(settings)
-                and not already_applied
-            ):
-                apply_result = _run_apply_update(settings)
-            state = _load_schedule_state(settings)
-            state.update({
-                "last_update_check": int(time.time()),
-                "update_check": check,
-            })
-            if apply_result is not None:
-                state["last_auto_update"] = int(time.time())
-                state["auto_update_result"] = apply_result
-            _save_schedule_state(settings, state)
-        except Exception:
-            logger.exception("Periodic update check failed (non-fatal)")
-
 
 def _scheduler_loop() -> None:
     # Self-update / plugin reload swaps the module behind the running thread.
@@ -1033,7 +979,7 @@ def _ensure_schedule_running() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = str(_MANIFEST.get("version") or "1.2.24")
+    version = str(_MANIFEST.get("version") or "1.2.25")
     description = (
         "Twitch Live TV for Dispatcharr with anonymous metadata, Streamlink "
         "playback, XMLTV guide data and channel sync. No Twitch sign-in required."

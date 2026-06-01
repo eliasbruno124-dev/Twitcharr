@@ -26,11 +26,11 @@ streamlink-ttvlol, or any proxy operator.
 | Stream playback | Creates Streamlink commands that open `https://twitch.tv/<login>` through Dispatcharr. Streamlink must already be installed. |
 | Streamlink config | Writes long Streamlink options to `<data_dir>/twitcharr.streamlinkrc` so Dispatcharr's StreamProfile parameter field stays short. |
 | ttv.lol | Downloads or refreshes `twitch.py` from streamlink-ttvlol when requested and during scheduled checks. |
-| Offline channels | Can keep offline configured channels in the lineup or prune them until they are live again. |
+| Offline channels | **Show offline channels** remains available, but its default is off. Turn it on to keep offline streamers in the lineup. |
 | Images | Uses Twitch category artwork for live entries when available, and Twitch profile images for offline entries. |
 | Media servers | Can trigger the Emby/Jellyfin `Refresh Guide` scheduled task when URL and API key are configured. |
 | Diagnostics | Provides proxy reachability and bandwidth measurement actions. There is no separate full health-check action in the plugin UI. |
-| Self-update | Checks GitHub releases every 6 hours when enabled and can apply newer plugin releases. Reload plugins or restart Dispatcharr afterwards. |
+| Plugin update | Provides a manual **Update plugin** action for newer Twitcharr GitHub releases. Reload plugins or restart Dispatcharr afterwards. |
 
 ## What It Does Not Do
 
@@ -40,6 +40,7 @@ streamlink-ttvlol, or any proxy operator.
 - It does not transcode video or burn guide data into video streams.
 - It does not create a public M3U endpoint. It manages Dispatcharr database objects directly and writes XMLTV to disk.
 - It does not make Emby/Jellyfin update instantly by itself. It only triggers their guide refresh task when configured.
+- It does not automatically update Twitcharr itself in the background. ttv.lol still has its own scheduled refresh.
 - It does not ship screenshots in this repository right now.
 
 ## Install
@@ -123,15 +124,13 @@ those tokens on their own line.
 | Stream quality | `adaptive` | Fixed values are passed to Streamlink. `adaptive` builds a fallback chain from bandwidth settings. |
 | Connection bandwidth (Mbps) | `0` | `0` uses the last measured bandwidth value, or the plugin's conservative fallback. |
 | Bandwidth safety margin (%) | `50` | Extra headroom used by adaptive quality. Values are clamped to the supported range. |
-| Fastest possible startup | on | Uses shorter Streamlink timeouts and more aggressive HLS startup options. |
-| Low-latency mode | on | Enables Streamlink's Twitch low-latency options. |
-| Show offline channels | on | Keeps offline configured channels in the lineup with offline guide data. Off means offline channels are pruned during sync. |
-| EPG refresh interval | `2` minutes | Background scheduler interval for Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV. Minimum is 1 minute. |
-| ttv.lol proxy servers | EU defaults | Comma-separated proxy playlist URLs passed to Streamlink. Empty disables proxy playlist use. |
+| Fastest possible startup | `true` | Uses shorter Streamlink timeouts and more aggressive HLS startup options. |
+| Low-latency mode | `true` | Enables Streamlink's Twitch low-latency options. |
+| Show offline channels | `false` | Offline configured channels are pruned during sync. Turn on to keep offline streamers in the lineup with offline guide data. |
+| EPG refresh interval (minutes) | `2` | Background scheduler interval for Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV. Minimum is 1 minute. |
+| ttv.lol proxy servers | `https://eu.luminous.dev,https://eu2.luminous.dev,https://lb-eu.cdn-perfprod.com,https://lb-eu2.cdn-perfprod.com` | Comma-separated proxy playlist URLs passed to Streamlink. Empty disables proxy playlist use. |
 | Emby / Jellyfin URL | empty | Optional media-server base URL. |
 | Emby / Jellyfin API key | empty | API key for Emby/Jellyfin guide refresh only. This is not a Twitch key. |
-| Auto-check for plugin updates | on | Checks GitHub latest release every 6 hours. |
-| Auto-apply plugin updates | on | Applies a newer GitHub release automatically, then requires plugin reload or container restart. |
 | Data directory | `/app/data/plugins/twitcharr` | Stores XMLTV, scheduler state, Streamlink config, and downloaded streamlink-ttvlol plugin. |
 
 ## Actions
@@ -159,15 +158,16 @@ The scheduler:
 - refreshes Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV according to `EPG refresh interval`
 - skips guide syncs when no Twitch input is configured
 - updates ttv.lol once per server-local day after midnight
-- checks GitHub releases every 6 hours when auto-check is enabled
-- applies newer plugin releases only when auto-apply is enabled
+
+The scheduler does not check or apply Twitcharr plugin updates. Use **Update plugin**
+manually for Twitcharr releases. The scheduled ttv.lol refresh remains active.
 
 ## Offline Behavior
 
-`Show offline channels` controls configured streamer channels:
+`Show offline channels` controls configured streamer channels and is off by default:
 
-- On: offline streamers stay in the Dispatcharr lineup with offline guide data.
 - Off: offline streamers are removed during sync and recreated when they are live again.
+- On: offline streamers stay in the Dispatcharr lineup with offline guide data.
 
 If `Show offline channels` is off and nobody in the configured lineup is live,
 Twitcharr prunes its managed Channels/Streams instead of creating a placeholder
