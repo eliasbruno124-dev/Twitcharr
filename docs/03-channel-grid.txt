@@ -1,9 +1,0 @@
-FILENAME: 03-channel-grid.png
-
-Capture the Live TV channel grid in Emby, Jellyfin or Dispatcharr.
-
-Show:
-- Twitch channel group
-- Live Twitch channels if available
-- Live preview thumbnails if enabled
-- The built-in offline card if nobody is live

@@ -16,6 +16,9 @@ twitcharr/.self_update_state.json
 twitcharr/.*.lock
 twitcharr/.cache/
 
+# Release asset
+twitcharr.zip
+
 # Editor / OS
 .vscode/
 .idea/

@@ -32,7 +32,7 @@ and use configured ttv.lol playlist proxies.
 
 ### Import ZIP
 
-1. Use `twitcharr.zip` from this repository, or zip the `twitcharr/` folder yourself.
+1. Download `twitcharr.zip` from the latest GitHub release.
 2. Open Dispatcharr.
 3. Go to Plugins.
 4. Import the ZIP.
