@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 PLUGIN_KEY = "twitcharr"
-GITHUB_REPO = "eliasbruno124-dev/Dispatcharr-Twitch-EPG"
+GITHUB_REPO = "eliasbruno124-dev/Twitcharr"
 GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
 DONATE_URL = "https://paypal.me/eliasbruno124"

@@ -3,7 +3,10 @@
   "version": "1.2.25",
   "description": "A polished Twitch Live TV lineup for Dispatcharr. Add channels or discovery rules, then sync channels, streams and XMLTV guide data using anonymous Twitch metadata only. No OAuth, Client ID, Client Secret or Twitch sign-in required.",
   "author": "eliasbruno124",
-  "help_url": "https://github.com/eliasbruno124-dev/Dispatcharr-Twitch-EPG",
+  "maintainers": ["eliasbruno124-dev"],
+  "license": "MIT",
+  "help_url": "https://github.com/eliasbruno124-dev/Twitcharr",
+  "repo_url": "https://github.com/eliasbruno124-dev/Twitcharr",
   "donate_url": "https://paypal.me/eliasbruno124",
   "fields": [
     {
