@@ -6,7 +6,6 @@ Combines:
   * direct Channel/Stream/EPGData rows in Dispatcharr — no manual M3U/EPG setup
   * Twitch channel discovery (game/top/search) directly inside the lineup field
   * Emby/Jellyfin guide refresh on every EPG cycle
-  * a manual self-update action that pulls new releases from GitHub
 """
 
 from __future__ import annotations
@@ -693,28 +692,6 @@ def _run_measure_bandwidth(settings: dict) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Self-update
-# ---------------------------------------------------------------------------
-
-
-def _current_version() -> str:
-    return Plugin.version  # mirrored by the class below
-
-
-def _run_apply_update(settings: dict) -> dict:
-    from . import self_update
-
-    # Stop the scheduler before files are swapped on disk; otherwise the
-    # running thread keeps its stale bytecode and starts throwing ImportErrors
-    # the moment Dispatcharr reloads the module.
-    _stop_scheduler()
-    return self_update.apply_update(
-        current_version=_current_version(),
-        data_dir=_data_dir(settings),
-    )
-
-
 def _run_uninstall(settings: dict) -> dict:
     from . import streamlink_setup
 
@@ -1019,8 +996,6 @@ class Plugin:
                 return _run_measure_bandwidth(settings)
             if action == "test_proxies":
                 return _run_test_proxies(settings)
-            if action == "apply_update":
-                return _run_apply_update(settings)
             if action == "uninstall":
                 return _run_uninstall(settings)
             return {"status": "error", "message": f"Unknown action: {action}"}

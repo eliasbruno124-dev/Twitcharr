@@ -114,7 +114,44 @@ those tokens on their own line.
 | Update ttv.lol | Checks GitHub and downloads the streamlink-ttvlol `twitch.py` file when changed. |
 | Uninstall | Deletes Twitcharr-managed Channels, Streams, StreamProfile, and EPG source rows, then refreshes Emby/Jellyfin if configured. Plugin files and settings remain. |
 
+When the plugin module is loaded, Twitcharr starts an in-process background
+scheduler. `Sync now` also ensures it is running.
 
+The scheduler:
+
+- refreshes Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV according to `EPG refresh interval`
+- skips guide syncs when no Twitch input is configured
+- updates ttv.lol once per server-local day after midnight
+
+The scheduled ttv.lol refresh remains active.
+
+## Offline Behavior
+
+`Show offline channels` controls configured streamer channels and is off by default:
+
+- Off: offline streamers are removed during sync and recreated when they are live again.
+- On: offline streamers stay in the Dispatcharr lineup with offline guide data.
+
+If `Show offline channels` is off and nobody in the configured lineup is live,
+Twitcharr prunes its managed Channels/Streams instead of creating a placeholder
+channel.
+
+## Guide And Images
+
+Twitcharr writes guide data where Dispatcharr and TV clients expect it:
+
+- Dispatcharr `EPGData` and `ProgramData` rows
+- `<data_dir>/twitch.xmltv`
+- channel icons from Twitch category artwork when live, falling back to Twitch profile images
+- programme icons from Twitch category artwork when available
+- programme titles with streamer, category, and viewer count for live streams
+- offline programme title `⚫ Offline` with Twitch profile artwork for offline streamers
+
+Twitcharr also avoids storing image URLs longer than Dispatcharr's 500-character
+database fields.
+
+For Emby and Jellyfin, Twitcharr only triggers `Refresh Guide`. Those servers
+still control their own caching and display timing.
 
 ## Troubleshooting
 
@@ -128,7 +165,6 @@ those tokens on their own line.
 | Guide looks stale | Run **Refresh guide** or **Sync channels**. For Emby/Jellyfin, also run **Refresh Emby / Jellyfin**. |
 | Emby/Jellyfin does not update | Set both media-server URL and API key, then run **Refresh Emby / Jellyfin**. |
 | Adaptive quality is too high or too low | Run **Measure bandwidth**, set a manual bandwidth value, or adjust the safety margin. |
-| Plugin update applied but code did not change | Reload Dispatcharr plugins or restart the Dispatcharr container. |
 
 ## Sources
 

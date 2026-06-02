@@ -176,19 +176,6 @@
       "button_color": "blue"
     },
     {
-      "id": "apply_update",
-      "label": "Update plugin",
-      "description": "Checks GitHub for a new Twitcharr release and applies it when an update is available, while keeping settings and guide data.",
-      "button_label": "Update plugin",
-      "button_variant": "outline",
-      "button_color": "blue",
-      "confirm": {
-        "required": true,
-        "title": "Update Twitcharr from GitHub?",
-        "message": "Downloads the latest release and replaces the plugin code. Settings, XMLTV and the cached ttv.lol plugin are kept."
-      }
-    },
-    {
       "id": "uninstall",
       "label": "Uninstall",
       "description": "Removes the managed StreamProfile, EPG source, channels and streams, then refreshes Emby/Jellyfin once if configured.",

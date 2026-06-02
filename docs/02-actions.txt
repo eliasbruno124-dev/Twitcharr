@@ -11,6 +11,5 @@ Show:
 - Measure bandwidth
 - Refresh media server
 - Update ttv.lol
-- Check/apply update
 - Donate via PayPal
 - Uninstall
