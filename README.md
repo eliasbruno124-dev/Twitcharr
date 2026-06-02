@@ -21,14 +21,11 @@ and use configured ttv.lol playlist proxies.
 | Discovery | Supports `top`, `top:25`, `top:de:25`, `top:de,en:50`, `game:Just Chatting:10`, and `search:gronkh:5`. |
 | Dispatcharr objects | Creates and updates Twitcharr-owned Channels, Streams, a Channel Group, an EPG source, and one StreamProfile. |
 | Guide data | Writes Dispatcharr `EPGData` / `ProgramData` rows and `<data_dir>/twitch.xmltv`. |
-| Stream playback | Creates Streamlink commands that open `https://twitch.tv/<login>` through Dispatcharr. Streamlink must already be installed. |
-| Streamlink config | Writes long Streamlink options to `<data_dir>/twitcharr.streamlinkrc` so Dispatcharr's StreamProfile parameter field stays short. |
 | ttv.lol | Downloads or refreshes `twitch.py` from streamlink-ttvlol when requested and during scheduled checks. |
 | Offline channels | **Show offline channels** remains available, but its default is off. Turn it on to keep offline streamers in the lineup. |
 | Images | Uses Twitch category artwork for live entries when available, and Twitch profile images for offline entries. |
 | Media servers | Can trigger the Emby/Jellyfin `Refresh Guide` scheduled task when URL and API key are configured. |
 | Diagnostics | Provides proxy reachability and bandwidth measurement actions. There is no separate full health-check action in the plugin UI. |
-| Plugin update | Provides a manual **Update plugin** action for newer Twitcharr GitHub releases. Reload plugins or restart Dispatcharr afterwards. |
 
 
 ## Install
@@ -41,14 +38,6 @@ and use configured ttv.lol playlist proxies.
 4. Import the ZIP.
 5. Enable Twitcharr.
 
-### Manual Copy
-
-Copy the `twitcharr/` plugin folder into Dispatcharr's plugin-code directory and
-refresh the plugin list. In current Dispatcharr containers this is usually:
-
-```text
-/data/plugins/twitcharr
-```
 
 
 ## Quick Setup
@@ -125,47 +114,7 @@ those tokens on their own line.
 | Update ttv.lol | Checks GitHub and downloads the streamlink-ttvlol `twitch.py` file when changed. |
 | Uninstall | Deletes Twitcharr-managed Channels, Streams, StreamProfile, and EPG source rows, then refreshes Emby/Jellyfin if configured. Plugin files and settings remain. |
 
-## Scheduler
 
-When the plugin module is loaded, Twitcharr starts an in-process background
-scheduler. `Sync now` also ensures it is running.
-
-The scheduler:
-
-- refreshes Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV according to `EPG refresh interval`
-- skips guide syncs when no Twitch input is configured
-- updates ttv.lol once per server-local day after midnight
-
-The scheduler does not check or apply Twitcharr plugin updates. Use **Update plugin**
-manually for Twitcharr releases. The scheduled ttv.lol refresh remains active.
-
-## Offline Behavior
-
-`Show offline channels` controls configured streamer channels and is off by default:
-
-- Off: offline streamers are removed during sync and recreated when they are live again.
-- On: offline streamers stay in the Dispatcharr lineup with offline guide data.
-
-If `Show offline channels` is off and nobody in the configured lineup is live,
-Twitcharr prunes its managed Channels/Streams instead of creating a placeholder
-channel.
-
-## Guide And Images
-
-Twitcharr writes guide data where Dispatcharr and TV clients expect it:
-
-- Dispatcharr `EPGData` and `ProgramData` rows
-- `<data_dir>/twitch.xmltv`
-- channel icons from Twitch category artwork when live, falling back to Twitch profile images
-- programme icons from Twitch category artwork when available
-- programme titles with streamer, category, and viewer count for live streams
-- offline programme title `⚫ Offline` with Twitch profile artwork for offline streamers
-
-Twitcharr also avoids storing image URLs longer than Dispatcharr's 500-character
-database fields.
-
-For Emby and Jellyfin, Twitcharr only triggers `Refresh Guide`. Those servers
-still control their own caching and display timing.
 
 ## Troubleshooting
 
@@ -193,6 +142,12 @@ still control their own caching and display timing.
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
-## Donate
+## Support the Developer
 
-[paypal.me/eliasbruno124](https://paypal.me/eliasbruno124)
+This plugin is free and open-source, maintained with a lot of love in my spare time. If it brings value to your Emby setup, a small donation would mean the world to me.
+
+<p align="center">
+  <a href="https://paypal.me/eliasbruno123">
+    <img src="https://img.shields.io/badge/Donate%20with-PayPal-0070BA?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate with PayPal">
+  </a>
+</p>
