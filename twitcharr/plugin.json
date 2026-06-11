@@ -1,6 +1,6 @@
 {
   "name": "Twitcharr",
-  "version": "1.2.25",
+  "version": "1.3.0",
   "description": "A polished Twitch Live TV lineup for Dispatcharr. Add channels or discovery rules, then sync channels, streams and XMLTV guide data using anonymous Twitch metadata only. No OAuth, Client ID, Client Secret or Twitch sign-in required.",
   "author": "eliasbruno124",
   "maintainers": ["eliasbruno124-dev"],
@@ -14,8 +14,16 @@
       "label": "Twitch channels and discovery",
       "type": "text",
       "default": "",
-      "placeholder": "gronkh, papaplatte, knossi\ntop:de:25\ngame:Just Chatting:10\nsearch:knossi",
-      "description": "Enter Twitch names or URLs, separated by commas or line breaks. Discovery rules are supported: top, top:<lang>:<n>, game:<category>:<n>, search:<text>:<n>."
+      "placeholder": "gronkh, papaplatte(family), knossi\ntop:de:25\ngame:Just Chatting:10\nsearch:knossi",
+      "description": "Enter Twitch names or URLs, separated by commas or line breaks. Discovery rules are supported: top, top:<lang>:<n>, game:<category>:<n>, search:<text>:<n>. Append (profile1, profile2) to any entry to add its channels to specific Dispatcharr channel profiles."
+    },
+    {
+      "id": "channel_profiles",
+      "label": "Channel profiles",
+      "type": "text",
+      "default": "",
+      "placeholder": "Livestreams, Family",
+      "description": "Optional comma-separated Dispatcharr channel profile names. Every Twitcharr-managed channel is added to these profiles on sync. Use * for all profiles. Per-channel overrides: name(profile1, profile2) in the channels field."
     },
     {
       "id": "channel_group_name",
@@ -36,7 +44,18 @@
       "label": "Stream quality",
       "type": "select",
       "default": "adaptive",
-      "options": ["adaptive", "best", "1080p60", "1080p", "720p60", "720p", "480p", "360p", "160p", "worst"],
+      "options": [
+        {"value": "adaptive", "label": "Adaptive (auto)"},
+        {"value": "best", "label": "Best"},
+        {"value": "1080p60", "label": "1080p60"},
+        {"value": "1080p", "label": "1080p"},
+        {"value": "720p60", "label": "720p60"},
+        {"value": "720p", "label": "720p"},
+        {"value": "480p", "label": "480p"},
+        {"value": "360p", "label": "360p"},
+        {"value": "160p", "label": "160p"},
+        {"value": "worst", "label": "Worst"}
+      ],
       "description": "Adaptive chooses the best stream variant your connection can sustain. Fixed values are passed directly to Streamlink."
     },
     {

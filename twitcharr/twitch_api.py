@@ -29,6 +29,11 @@ PUBLIC_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
 GQL_BATCH = 25
 DEFAULT_TIMEOUT = 15
 BOX_ART_SIZE_RE = re.compile(r"-\d+x\d+(?=\.[a-zA-Z0-9]+(?:\?|$))")
+# Trailing "(profile1, profile2)" on any channels-field token assigns the
+# resolved channels to those Dispatcharr channel profiles. The "(" must
+# follow the token without a space: that keeps category names like
+# "game:Tomb Raider (2013)" intact while still matching "gronkh(family)".
+PROFILE_SUFFIX_RE = re.compile(r"^(?P<base>.*?\S)\((?P<profiles>[^()]*)\)\s*$")
 
 CHANNEL_QUERY = """
 query Twitcharr($login: String!) {
@@ -337,8 +342,11 @@ def parse_login_list(raw: str) -> list[dict]:
         {"type": "top",   "languages": ["de"], "limit": int}
         {"type": "search","value": "<free text>", "limit": int}
 
+    Any item may additionally carry {"profiles": ["profile1", ...]} when the
+    token ends in a parenthesized profile list.
+
     Input can be separated by new lines or commas:
-        gronkh, papaplatte, knossi
+        gronkh, papaplatte(family), knossi
 
     Discovery tokens accepted (case-insensitive on the prefix):
         game:Just Chatting           -> top 10 streams in that category
@@ -348,6 +356,11 @@ def parse_login_list(raw: str) -> list[dict]:
         top:de:25                    -> top 25 German
         search:gronkh                -> first 10 search hits
         search:gronkh:5              -> first 5 hits
+
+    Channel-profile suffix (works on logins and discovery tokens; no space
+    before the parenthesis, so names like "game:Tomb Raider (2013)" survive):
+        gronkh(family)               -> add channel to profile "family"
+        top:de:25(Livestreams, TV)   -> add all 25 to both profiles
     """
     if not raw:
         return []
@@ -359,6 +372,34 @@ def parse_login_list(raw: str) -> list[dict]:
     return _dedup_items(items)
 
 
+def _split_profiles_suffix(token: str) -> tuple[str, list[str]]:
+    """Split `name(profile1, profile2)` into ("name", ["profile1", "profile2"])."""
+    match = PROFILE_SUFFIX_RE.match(token or "")
+    if not match:
+        return (token or "").strip(), []
+    profiles = [p.strip() for p in match.group("profiles").split(",") if p.strip()]
+    return match.group("base").strip(), profiles
+
+
+def _split_commas_outside_parens(line: str) -> list[str]:
+    """Split on commas, but never inside a (profile, list) suffix."""
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for ch in line:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    parts.append("".join(current))
+    return parts
+
+
 def _iter_input_tokens(raw: str):
     for line in raw.replace("\r", "\n").replace(";", "\n").split("\n"):
         line = line.strip()
@@ -367,7 +408,7 @@ def _iter_input_tokens(raw: str):
         if _should_keep_comma_token(line):
             yield line
             continue
-        for part in line.split(","):
+        for part in _split_commas_outside_parens(line):
             part = part.strip()
             if part:
                 yield part
@@ -379,11 +420,12 @@ def _should_keep_comma_token(line: str) -> bool:
     Category/search names with commas are ambiguous in a free-text textarea; put
     those discovery tokens on their own line without extra comma-separated items.
     """
-    low = line.lower()
-    if not low.startswith("top:") or "," not in line:
+    base, _ = _split_profiles_suffix(line)
+    low = base.lower()
+    if not low.startswith("top:") or "," not in base:
         return False
 
-    rest = line[4:].strip()
+    rest = base[4:].strip()
     if not rest:
         return False
     parts = [p.strip() for p in rest.split(":") if p.strip()]
@@ -401,6 +443,14 @@ def _should_keep_comma_token(line: str) -> bool:
 
 
 def _parse_single_token(t: str) -> dict | None:
+    base, profiles = _split_profiles_suffix(t)
+    item = _parse_token_body(base)
+    if item is not None and profiles:
+        item["profiles"] = profiles
+    return item
+
+
+def _parse_token_body(t: str) -> dict | None:
     low = t.lower()
     if low.startswith("game:"):
         rest = t[5:].strip()
@@ -450,7 +500,7 @@ def _split_trailing_limit(text: str, *, default: int) -> tuple[str, int]:
 
 
 def _dedup_items(items: list[dict]) -> list[dict]:
-    seen: set = set()
+    seen: dict = {}
     out: list[dict] = []
     for item in items:
         if item["type"] == "login":
@@ -463,17 +513,25 @@ def _dedup_items(items: list[dict]) -> list[dict]:
             key = ("search", item["value"].lower(), item["limit"])
         else:
             continue
-        if key in seen:
+        existing = seen.get(key)
+        if existing is not None:
+            # Same token listed twice: keep one entry, union the profiles.
+            for profile in item.get("profiles") or []:
+                merged = existing.setdefault("profiles", [])
+                if profile not in merged:
+                    merged.append(profile)
             continue
-        seen.add(key)
+        seen[key] = item
         out.append(item)
     return out
 
 
-def resolve_logins(client: TwitchClient, items: list[dict]) -> list[str]:
-    """Turn parsed items (logins + discovery tokens) into a flat unique login list."""
+def resolve_logins(client: TwitchClient, items: list[dict]) -> tuple[list[str], dict[str, list[str]]]:
+    """Turn parsed items (logins + discovery tokens) into a flat unique login
+    list plus a per-login channel-profile mapping from `(...)` suffixes."""
     seen: set[str] = set()
     out: list[str] = []
+    profiles_by_login: dict[str, list[str]] = {}
     for item in items:
         candidates: Iterable[str] = ()
         if item["type"] == "login":
@@ -488,15 +546,22 @@ def resolve_logins(client: TwitchClient, items: list[dict]) -> list[str]:
         elif item["type"] == "search":
             candidates = client.search_channels(item["value"], limit=item["limit"])
 
+        item_profiles = item.get("profiles") or []
         for login in candidates:
             login = (login or "").strip().lower()
-            if not login or login in seen:
+            if not login:
                 continue
             if not login.replace("_", "").isalnum():
                 continue
-            seen.add(login)
-            out.append(login)
-    return out
+            if login not in seen:
+                seen.add(login)
+                out.append(login)
+            if item_profiles:
+                merged = profiles_by_login.setdefault(login, [])
+                for profile in item_profiles:
+                    if profile not in merged:
+                        merged.append(profile)
+    return out, profiles_by_login
 
 
 def render_box_art(url: str, width: int = 272, height: int = 380) -> str:

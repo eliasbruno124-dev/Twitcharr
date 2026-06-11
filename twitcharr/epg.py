@@ -107,21 +107,46 @@ def xmltv_path(data_dir: str) -> str:
 # ---------------------------------------------------------------------------
 
 def get_or_create_epg_source(data_dir: str):
-    """Always returns an active EPGSource that points at our XMLTV file."""
+    """Always returns an active EPGSource that points at our XMLTV file.
+
+    Writes only when a field actually drifted. An unconditional
+    `update_or_create` here re-saved schedule-relevant fields every cycle,
+    which fires Dispatcharr's EPGSource post_save scheduling signal and
+    rewrites the Celery beat tables every couple of minutes for nothing.
+    """
     from apps.epg.models import EPGSource
 
-    source, _ = EPGSource.objects.update_or_create(
+    desired_path = xmltv_path(data_dir)
+    source, created = EPGSource.objects.get_or_create(
         name=EPG_SOURCE_NAME,
         defaults={
             "source_type": "xmltv",
             "url": "",
-            "file_path": xmltv_path(data_dir),
+            "file_path": desired_path,
             "is_active": True,
             "refresh_interval": 0,
             "status": "success",
             "last_message": "Managed by Twitcharr",
         },
     )
+    if created:
+        return source
+
+    update_fields: list[str] = []
+    if source.source_type != "xmltv":
+        source.source_type = "xmltv"
+        update_fields.append("source_type")
+    if source.file_path != desired_path:
+        source.file_path = desired_path
+        update_fields.append("file_path")
+    if not source.is_active:
+        source.is_active = True
+        update_fields.append("is_active")
+    if source.refresh_interval != 0:
+        source.refresh_interval = 0
+        update_fields.append("refresh_interval")
+    if update_fields:
+        source.save(update_fields=update_fields)
     return source
 
 
@@ -138,12 +163,16 @@ def build_entries(
     offline_program_icon_url: str = "",
     use_live_thumbnails: bool = False,
     cache_bust: int = 0,
+    profiles_by_login: dict[str, list[str]] | None = None,
 ) -> list[dict]:
     """Returns a list of dicts, one per channel.
 
     `icon_url` is the channel/overview logo. `program_icon_url` is the current
     programme artwork, so TV clients can use 16:9 guide art without forcing
-    that same image into portrait-style channel grids.
+    that same image into portrait-style channel grids. `icon_url_stable` is
+    the same artwork without the per-cycle cache-bust parameter — Logo and
+    Stream rows must use it, otherwise every cycle mints a brand-new unique
+    Logo URL and the logos table grows forever.
     """
     users = client.get_users(logins)
     streams = client.get_streams(logins)
@@ -197,6 +226,7 @@ def build_entries(
             else:
                 icon_url = ""
 
+            icon_url_stable = icon_url
             program_icon_url = _cache_bust_image_url(program_icon_url, cache_bust)
             icon_url = _cache_bust_image_url(icon_url, cache_bust)
 
@@ -235,6 +265,7 @@ def build_entries(
             # tiles. Custom offline SVG/PNG placeholders can lag or break in
             # this view, so offline channels use the streamer's profile image
             # while the programme title carries the offline state.
+            icon_url_stable = u.profile_image_url
             icon_url = _cache_bust_image_url(u.profile_image_url, cache_bust)
             program_icon_url = icon_url
             game_name = ""
@@ -258,6 +289,8 @@ def build_entries(
             "channel_name": channel_name,
             "profile_image_url": u.profile_image_url,
             "icon_url": icon_url,
+            "icon_url_stable": icon_url_stable,
+            "profiles": list((profiles_by_login or {}).get(login, [])),
             "program_icon_url": program_icon_url,
             "description": description,
             "live": live,
@@ -360,6 +393,46 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
 # Direct DB upserts
 # ---------------------------------------------------------------------------
 
+def _programme_window(e: dict, now: datetime) -> tuple[datetime, datetime]:
+    if e["live"]:
+        started = _parse_iso(e["started_at"]) or now
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        end = now + timedelta(hours=LIVE_PROGRAMME_HOURS)
+    else:
+        started = now - timedelta(minutes=OFFLINE_PROGRAMME_START_BACKDATE_MINUTES)
+        end = now + timedelta(hours=OFFLINE_PROGRAMME_HOURS)
+    return started, end
+
+
+def _program_for_entry(e: dict, epg, now: datetime):
+    from apps.epg.models import ProgramData
+
+    started, end = _programme_window(e, now)
+    custom_properties = {
+        "twitch_login": e["login"],
+        "twitch_live": e["live"],
+        "twitch_viewers": e["viewer_count"],
+        "twitch_display_name": e["display_name"],
+        "twitch_game_name": e["game_name"],
+        "twitch_stream_title": e.get("stream_title") or "",
+        "twitch_url": e.get("twitch_url") or f"https://twitch.tv/{e['login']}",
+    }
+    if e.get("program_icon_url"):
+        custom_properties["icon"] = e["program_icon_url"]
+
+    return ProgramData(
+        epg=epg,
+        tvg_id=channel_tvg_id(e["login"]),
+        start_time=started,
+        end_time=end,
+        title=e["title"],
+        sub_title="",
+        description=e["description"] or "",
+        custom_properties=custom_properties,
+    )
+
+
 @transaction.atomic
 def upsert_db(entries: list[dict], data_dir: str) -> dict:
     """Write EPGData + ProgramData rows and link any pre-existing Channel.
@@ -396,42 +469,10 @@ def upsert_db(entries: list[dict], data_dir: str) -> dict:
 
     new_programs: list[ProgramData] = []
     for e in entries:
-        tvg = channel_tvg_id(e["login"])
-        epg = epg_rows.get(tvg)
+        epg = epg_rows.get(channel_tvg_id(e["login"]))
         if not epg:
             continue
-
-        if e["live"]:
-            started = _parse_iso(e["started_at"]) or now
-            end = now + timedelta(hours=LIVE_PROGRAMME_HOURS)
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=timezone.utc)
-        else:
-            started = now - timedelta(minutes=OFFLINE_PROGRAMME_START_BACKDATE_MINUTES)
-            end = now + timedelta(hours=OFFLINE_PROGRAMME_HOURS)
-
-        custom_properties = {
-            "twitch_login": e["login"],
-            "twitch_live": e["live"],
-            "twitch_viewers": e["viewer_count"],
-            "twitch_display_name": e["display_name"],
-            "twitch_game_name": e["game_name"],
-            "twitch_stream_title": e.get("stream_title") or "",
-            "twitch_url": e.get("twitch_url") or f"https://twitch.tv/{e['login']}",
-        }
-        if e.get("program_icon_url"):
-            custom_properties["icon"] = e["program_icon_url"]
-
-        new_programs.append(ProgramData(
-            epg=epg,
-            tvg_id=tvg,
-            start_time=started,
-            end_time=end,
-            title=e["title"],
-            sub_title="",
-            description=e["description"] or "",
-            custom_properties=custom_properties,
-        ))
+        new_programs.append(_program_for_entry(e, epg, now))
 
     if new_programs:
         ProgramData.objects.bulk_create(new_programs, batch_size=500)
@@ -500,3 +541,41 @@ def link_channels_to_epg(entries: list[dict], data_dir: str) -> dict:
         "linked_channels": linked_channels,
         "checked_channels": len(tvg_ids),
     }
+
+
+@transaction.atomic
+def ensure_programs(entries: list[dict], data_dir: str) -> dict:
+    """Self-heal: recreate programme rows that vanished during channel sync.
+
+    Creating a Channel with EPG data makes Dispatcharr dispatch its
+    `parse_programs_for_tvg_id` Celery task, which *deletes* every programme
+    for that tvg_id before re-parsing the XMLTV file. If that task loses a
+    race (file mid-rewrite, lock contention, worker error), the new channel
+    sits with an empty guide until the next refresh cycle. This check runs
+    after channel sync and instantly rebuilds any emptied guide from the
+    entries already in memory.
+    """
+    from apps.epg.models import EPGData, ProgramData
+    from django.db.models import Count
+
+    by_tvg = {channel_tvg_id(e["login"]): e for e in entries}
+    if not by_tvg:
+        return {"programs_healed": 0}
+
+    source = get_or_create_epg_source(data_dir)
+    emptied = (
+        EPGData.objects.filter(epg_source=source, tvg_id__in=list(by_tvg))
+        .annotate(program_count=Count("programs"))
+        .filter(program_count=0)
+    )
+
+    now = djtz.now()
+    rows = [
+        _program_for_entry(by_tvg[epg.tvg_id], epg, now)
+        for epg in emptied
+        if epg.tvg_id in by_tvg
+    ]
+    if rows:
+        ProgramData.objects.bulk_create(rows)
+        logger.info("Healed %d channels whose guide rows were wiped mid-sync", len(rows))
+    return {"programs_healed": len(rows)}

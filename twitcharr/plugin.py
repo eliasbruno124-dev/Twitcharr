@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from typing import Any
@@ -40,6 +41,7 @@ DEFAULT_TTVLOL_PROXY_SERVERS = (
 )
 DEFAULT_SETTINGS: dict[str, Any] = {
     "channel_group_name": "Twitch",
+    "channel_profiles": "",
     "starting_channel_number": 9000,
     "data_dir": "/app/data/plugins/twitcharr",
     "include_offline": False,
@@ -189,14 +191,24 @@ def _twitch_client(_settings: dict):
     return TwitchClient()
 
 
-def _resolve_logins(settings: dict, client) -> list[str]:
-    """Parse the channels textarea and expand discovery tokens to logins."""
+def _resolve_logins(settings: dict, client) -> tuple[list[str], dict[str, list[str]]]:
+    """Parse the channels textarea and expand discovery tokens to logins.
+
+    Returns (logins, profiles_by_login) where the mapping carries channel
+    profiles requested via `name(profile1, profile2)` suffixes.
+    """
     from . import twitch_api as tw
 
     items = tw.parse_login_list(settings.get("channels") or "")
     if not items:
-        return []
+        return [], {}
     return tw.resolve_logins(client, items)
+
+
+def _profile_names(settings: dict) -> list[str]:
+    """Global channel-profile names from settings (comma-separated, '*' = all)."""
+    raw = _text_setting(settings, "channel_profiles")
+    return [p.strip() for p in raw.split(",") if p.strip()]
 
 
 def _resolve_stream_quality(settings: dict) -> str:
@@ -236,7 +248,7 @@ def _gather_entries(settings: dict, *, client=None):
     from . import epg
 
     client = client or _twitch_client(settings)
-    logins = _resolve_logins(settings, client)
+    logins, profiles_by_login = _resolve_logins(settings, client)
     if not logins:
         return client, [], []
     # Cache-bust image URLs per refresh cycle so Emby/Jellyfin do not keep
@@ -250,6 +262,7 @@ def _gather_entries(settings: dict, *, client=None):
         offline_program_icon_url=_offline_program_icon_url(settings, cache_bust=cache_bust),
         use_live_thumbnails=False,
         cache_bust=cache_bust,
+        profiles_by_login=profiles_by_login,
     )
     return client, logins, entries
 
@@ -303,6 +316,7 @@ def _sync_channels_from_entries(settings: dict, entries: list[dict]) -> dict:
         fast_startup=_bool_setting(settings, "fast_startup", True),
         offline_icon_url=_offline_icon_url(settings),
         offline_program_icon_url=_offline_program_icon_url(settings),
+        profile_names=_profile_names(settings),
     )
 
 
@@ -391,7 +405,17 @@ def _run_sync_channels(settings: dict, *, prebuilt=None) -> dict:
     guide_result = _write_lineup_guide(settings, entries)
     result = _sync_channels_from_entries(settings, entries)
     epg_link = epg.link_channels_to_epg(entries, _data_dir(settings))
+    # Channel creation makes Dispatcharr's parse task wipe and re-parse the
+    # programmes for that tvg_id; if it loses that race the channel sits
+    # without guide data until the next cycle. Heal those immediately.
+    heal_result = epg.ensure_programs(entries, _data_dir(settings))
     media_server_refresh = _trigger_media_server(settings)
+    if (result.get("channels_created") or 0) > 0 and media_server_refresh.get("status") == "ok":
+        # Emby/Jellyfin discovers brand-new channels on the first guide
+        # refresh but often fills their programmes only on the next one.
+        # trigger_guide_refresh waits for the task to go idle, so a second
+        # trigger here closes that gap instead of waiting a full cycle.
+        media_server_refresh = _trigger_media_server(settings)
     if not entries:
         result["message"] = "Nothing live right now. Offline channels pruned."
     return {
@@ -399,6 +423,7 @@ def _run_sync_channels(settings: dict, *, prebuilt=None) -> dict:
         "channels_synced": len(result.get("channel_names") or []),
         "guide": guide_result,
         "epg_link": epg_link,
+        "programs_healed": heal_result.get("programs_healed", 0),
         "media_server_refresh": media_server_refresh,
         "media_server_status": media_server_refresh.get("status"),
         **result,
@@ -724,6 +749,31 @@ _scheduler_stop = threading.Event()
 _scheduler_thread: threading.Thread | None = None
 
 
+def _is_web_server_process() -> bool:
+    """True inside Dispatcharr's uWSGI web workers or the Daphne ASGI server.
+
+    Dispatcharr's uWSGI workers run gevent with monkey-patching: a plugin
+    background thread there becomes a greenlet on the very OS thread that
+    serves every HTTP request, so one blocking call in the scheduler can
+    freeze the whole web UI (see Dispatcharr's uwsgi.ini comments). The
+    Celery worker processes also load plugins (via worker_ready) and use
+    real threads, so background work runs there instead.
+    """
+    if "uwsgi" in sys.modules:
+        return True
+    try:
+        import uwsgi  # type: ignore # noqa: F401  (only importable inside uWSGI)
+
+        return True
+    except ImportError:
+        pass
+    return any(
+        server in (arg or "").lower()
+        for arg in sys.argv[:2]
+        for server in ("daphne", "gunicorn")
+    )
+
+
 def _schedule_state_path(settings: dict) -> str:
     return os.path.join(_data_dir(settings), ".scheduler_state.json")
 
@@ -900,6 +950,12 @@ def _scheduler_loop() -> None:
 
 def _start_scheduler() -> bool:
     global _scheduler_thread
+    if _is_web_server_process():
+        logger.info(
+            "Twitcharr scheduler not started in web-server process; "
+            "it runs in the Celery worker processes instead"
+        )
+        return False
     with _scheduler_lock:
         if _scheduler_thread and _scheduler_thread.is_alive():
             return False
@@ -940,9 +996,16 @@ def _ensure_schedule_running() -> dict:
     """Make sure the background scheduler is running and report its status."""
     merged = _load_settings()
     started = _start_scheduler()
+    if _scheduler_is_running():
+        scheduler_state = "running"
+    elif _is_web_server_process():
+        # Actions run in web workers; the scheduler lives in Celery workers.
+        scheduler_state = "running in background worker processes"
+    else:
+        scheduler_state = "stopped"
     return {
         "status": "ok",
-        "scheduler": "running",
+        "scheduler": scheduler_state,
         "started_now": started,
         "epg_refresh": f"every {_interval_minutes(merged)} minutes",
         "ttvlol_update": "daily at midnight (server time)",
@@ -956,7 +1019,7 @@ def _ensure_schedule_running() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = str(_MANIFEST.get("version") or "1.2.25")
+    version = str(_MANIFEST.get("version") or "1.3.0")
     description = (
         "Twitch Live TV for Dispatcharr with anonymous metadata, Streamlink "
         "playback, XMLTV guide data and channel sync. No Twitch sign-in required."

@@ -201,6 +201,58 @@ def _channel_group(name: str):
     return group
 
 
+def _channel_profiles_by_name() -> dict:
+    """Lower-cased name -> ChannelProfile for every profile in Dispatcharr."""
+    from apps.channels.models import ChannelProfile
+
+    return {p.name.strip().lower(): p for p in ChannelProfile.objects.all()}
+
+
+def _select_profiles(names: list[str], lookup: dict) -> tuple[list, list[str]]:
+    """Resolve profile names (case-insensitive, '*' = all) to ChannelProfile rows.
+
+    Returns (profiles, unknown_names). Unknown names are reported instead of
+    auto-created so a typo cannot silently mint a new profile.
+    """
+    selected: dict[int, object] = {}
+    unknown: list[str] = []
+    for raw in names:
+        name = (raw or "").strip()
+        if not name:
+            continue
+        if name == "*":
+            for profile in lookup.values():
+                selected[profile.id] = profile
+            continue
+        profile = lookup.get(name.lower())
+        if profile is None:
+            if name not in unknown:
+                unknown.append(name)
+        else:
+            selected[profile.id] = profile
+    return list(selected.values()), unknown
+
+
+def _changed_fields(obj, defaults: dict) -> list[str]:
+    """Names of fields in `defaults` whose value differs from `obj`.
+
+    Compares FK columns by id (attname) so the check never lazy-loads the
+    related row just to compare it.
+    """
+    changed: list[str] = []
+    for key, value in defaults.items():
+        field = obj._meta.get_field(key)
+        if field.is_relation:
+            current = getattr(obj, field.attname)
+            new = value.pk if value is not None else None
+        else:
+            current = getattr(obj, key)
+            new = value
+        if current != new:
+            changed.append(key)
+    return changed
+
+
 def _custom_m3u_account():
     """Dispatcharr ships a built-in 'custom' M3UAccount for user-created streams.
     Channel.get_stream() requires every Stream to be linked to one — without it,
@@ -297,6 +349,7 @@ def sync_channels(
     offline_icon_url: str = "",
     offline_program_icon_url: str = "",
     fast_startup: bool = True,
+    profile_names: list[str] | None = None,
 ) -> dict:
     """Create / update Channel + Stream rows for every entry.
 
@@ -304,9 +357,14 @@ def sync_channels(
     Channels for logins outside the current entry list are pruned (so toggling
     'show offline' OFF actually removes those channels).
 
+    `profile_names` (global setting) plus each entry's `profiles` list control
+    Dispatcharr channel-profile membership: channels are added to those
+    profiles with enabled=True. Membership is only ever *added* — a user who
+    manually removed or disabled a channel in some profile keeps that choice.
+
     Returns counts plus a list of synced logins (for logging / UI).
     """
-    from apps.channels.models import Channel, ChannelStream, Stream
+    from apps.channels.models import Channel, ChannelProfileMembership, ChannelStream, Stream
 
     profile = get_or_create_stream_profile(
         data_dir=data_dir,
@@ -328,6 +386,13 @@ def sync_channels(
     pruned_channels, pruned_streams = _prune_unmanaged(synced_tvg_ids)
     pruned_channels += legacy_placeholder_channels
     pruned_streams += legacy_placeholder_streams
+    pruned_logos = _prune_leaked_logos()
+
+    global_profile_names = [p for p in (profile_names or []) if (p or "").strip()]
+    wants_profiles = bool(global_profile_names) or any(e.get("profiles") for e in real_entries)
+    profile_lookup = _channel_profiles_by_name() if wants_profiles else {}
+    memberships_added = 0
+    unknown_profiles: set[str] = set()
 
     # Prefetch every EPGData row for the upcoming tvg_ids in one query so we
     # can attach `epg_data` at Channel creation time. Without this, channels
@@ -370,7 +435,10 @@ def sync_channels(
         channel_name = e.get("channel_name") or e["display_name"]
 
         twitch_url = f"https://twitch.tv/{login}"
-        logo = _logo_for(login, channel_name, e["icon_url"])
+        # Logos must use the stable URL: cache-busted URLs change every cycle
+        # and Logo.url is unique, so each refresh would mint a new Logo row.
+        stable_icon_url = e.get("icon_url_stable") or e["icon_url"]
+        logo = _logo_for(login, channel_name, stable_icon_url)
 
         existing_for_number = existing_by_tvg.get(tvg)
         if existing_for_number and existing_for_number.channel_number:
@@ -383,7 +451,7 @@ def sync_channels(
         stream_defaults = {
             "name": channel_name,
             "url": twitch_url,
-            "logo_url": _db_safe_url(e.get("icon_url")),
+            "logo_url": _db_safe_url(stable_icon_url),
             "tvg_id": tvg,
             "stream_profile": profile,
             "is_custom": True,
@@ -397,9 +465,11 @@ def sync_channels(
         }
         stream = Stream.objects.filter(url=twitch_url, is_custom=True).first()
         if stream:
-            for k, v in stream_defaults.items():
-                setattr(stream, k, v)
-            stream.save()
+            changed = _changed_fields(stream, stream_defaults)
+            if changed:
+                for k in changed:
+                    setattr(stream, k, stream_defaults[k])
+                stream.save(update_fields=changed)
         else:
             stream = Stream.objects.create(**stream_defaults)
             created_streams += 1
@@ -417,10 +487,15 @@ def sync_channels(
             ch_defaults["epg_data"] = epg_row
         channel = existing_by_tvg.get(tvg)
         if channel:
-            for k, v in ch_defaults.items():
-                setattr(channel, k, v)
-            channel.save()
-            updated_channels += 1
+            changed = _changed_fields(channel, ch_defaults)
+            if changed:
+                for k in changed:
+                    setattr(channel, k, ch_defaults[k])
+                # update_fields keeps Dispatcharr's post_save signals accurate:
+                # when 'epg_data' is in the list, core re-parses programmes for
+                # this channel right away instead of waiting for the next cycle.
+                channel.save(update_fields=changed)
+                updated_channels += 1
         else:
             channel = Channel.objects.create(**ch_defaults)
             created_channels += 1
@@ -429,19 +504,47 @@ def sync_channels(
             channel=channel, stream=stream, defaults={"order": 0}
         )
 
+        if wants_profiles:
+            wanted, unknown = _select_profiles(
+                global_profile_names + list(e.get("profiles") or []),
+                profile_lookup,
+            )
+            unknown_profiles.update(unknown)
+            for channel_profile in wanted:
+                _, membership_created = ChannelProfileMembership.objects.get_or_create(
+                    channel_profile=channel_profile,
+                    channel=channel,
+                    defaults={"enabled": True},
+                )
+                if membership_created:
+                    memberships_added += 1
+
         synced_logins.append(login)
 
-    return {
-        "message": f"Synced {len(synced_logins)} Twitch channels.",
+    message = f"Synced {len(synced_logins)} Twitch channels."
+    if unknown_profiles:
+        message += (
+            f" Unknown channel profiles ignored: {', '.join(sorted(unknown_profiles))}."
+            " Create them in Dispatcharr first."
+        )
+
+    result = {
+        "message": message,
         "channels_created": created_channels,
         "channels_updated": updated_channels,
         "channels_pruned": pruned_channels,
         "streams_created": created_streams,
         "streams_pruned": pruned_streams,
+        "logos_pruned": pruned_logos,
         "channel_names": synced_logins,
         "stream_profile_id": profile.id,
         "channel_group_id": group.id,
+        "profile_memberships_added": memberships_added,
     }
+    if unknown_profiles:
+        result["unknown_profiles"] = sorted(unknown_profiles)
+        logger.warning("Twitcharr: unknown channel profiles ignored: %s", ", ".join(sorted(unknown_profiles)))
+    return result
 
 
 def _prune_unmanaged(keep_tvg_ids: set[str]) -> tuple[int, int]:
@@ -467,6 +570,27 @@ def _prune_unmanaged(keep_tvg_ids: set[str]) -> tuple[int, int]:
         stale_streams.delete()
 
     return channel_count, stream_count
+
+
+def _prune_leaked_logos() -> int:
+    """Delete unused cache-busted Logo rows minted by older Twitcharr versions.
+
+    Logo.url is unique and earlier releases stored the per-cycle cache-busted
+    artwork URL, so every refresh added one new Logo row per channel. Once
+    channels point at stable URLs these rows are orphans and safe to drop.
+    """
+    from apps.channels.models import Logo
+
+    stale = Logo.objects.filter(
+        name__startswith="Twitch: ",
+        url__contains="twarr_ts=",
+        channels__isnull=True,
+    )
+    count = stale.count()
+    if count:
+        stale.delete()
+        logger.info("Pruned %d leaked cache-busted Twitch logos", count)
+    return count
 
 
 # ---------------------------------------------------------------------------
@@ -500,9 +624,16 @@ def uninstall_managed_objects() -> dict:
 
     source_count = EPGSource.objects.filter(name=EPG_SOURCE_NAME).delete()[0]
 
+    from apps.channels.models import Logo
+
+    logo_count = Logo.objects.filter(
+        name__startswith="Twitch: ", channels__isnull=True
+    ).delete()[0]
+
     return {
         "channels_deleted": channel_count,
         "streams_deleted": stream_count,
         "stream_profile_deleted": profile_count,
         "epg_source_deleted": source_count,
+        "logos_deleted": logo_count,
     }

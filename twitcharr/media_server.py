@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT = 15
 IMAGE_WARM_TIMEOUT = 6
 IMAGE_WARM_LIMIT = 80
+# Hard wall-clock budget for the whole warmup. Without it, a slow or
+# unreachable media server turns the warmup into up to ~80 sequential
+# timeouts (several minutes) — and this code also runs inside a Dispatcharr
+# web request when the user clicks a sync action.
+IMAGE_WARM_BUDGET_S = 25
 GUIDE_TASK_KEY = "RefreshGuide"
 
 
@@ -82,6 +87,8 @@ def warm_live_tv_image_cache(*, base_url: str, api_key: str, max_images: int = I
     session = requests.Session()
     warmed = 0
     failures = 0
+    deadline = time.monotonic() + IMAGE_WARM_BUDGET_S
+    budget_exhausted = False
 
     endpoints = [
         ("/LiveTv/Channels", {"EnableImages": "true", "ImageTypeLimit": "1", "Limit": str(max_images)}),
@@ -89,6 +96,9 @@ def warm_live_tv_image_cache(*, base_url: str, api_key: str, max_images: int = I
     ]
     item_ids: list[str] = []
     for path, params in endpoints:
+        if time.monotonic() >= deadline:
+            budget_exhausted = True
+            break
         try:
             resp = session.get(f"{base}{path}", headers=headers, params=params, timeout=DEFAULT_TIMEOUT)
             if resp.status_code != 200:
@@ -103,6 +113,9 @@ def warm_live_tv_image_cache(*, base_url: str, api_key: str, max_images: int = I
             failures += 1
 
     for item_id in item_ids[:max_images]:
+        if time.monotonic() >= deadline:
+            budget_exhausted = True
+            break
         try:
             resp = session.get(
                 f"{base}/Items/{item_id}/Images/Primary",
@@ -118,11 +131,15 @@ def warm_live_tv_image_cache(*, base_url: str, api_key: str, max_images: int = I
             failures += 1
 
     status = "ok" if warmed or not failures else "error"
+    message = f"Warmed {warmed} Live TV image cache entries"
+    if budget_exhausted:
+        message += f" (stopped at {IMAGE_WARM_BUDGET_S}s budget)"
     return {
         "status": status,
-        "message": f"Warmed {warmed} Live TV image cache entries",
+        "message": message,
         "images_warmed": warmed,
         "failures": failures,
+        "budget_exhausted": budget_exhausted,
     }
 
 

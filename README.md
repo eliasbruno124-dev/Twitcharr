@@ -19,6 +19,7 @@ and use configured ttv.lol playlist proxies.
 |---|---|
 | Channel input | Accepts Twitch login names and Twitch URLs, separated by commas, semicolons, or line breaks. |
 | Discovery | Supports `top`, `top:25`, `top:de:25`, `top:de,en:50`, `game:Just Chatting:10`, and `search:gronkh:5`. |
+| Channel profiles | Adds managed channels to Dispatcharr channel profiles: globally via the **Channel profiles** setting, per entry via `name(profile1, profile2)`. |
 | Dispatcharr objects | Creates and updates Twitcharr-owned Channels, Streams, a Channel Group, an EPG source, and one StreamProfile. |
 | Guide data | Writes Dispatcharr `EPGData` / `ProgramData` rows and `<data_dir>/twitch.xmltv`. |
 | ttv.lol | Downloads or refreshes `twitch.py` from streamlink-ttvlol when requested and during scheduled checks. |
@@ -78,16 +79,37 @@ credential-looking input.
 | `game:Just Chatting:25` | Adds the top 25 live streams in that category. |
 | `search:gronkh` | Adds the first 10 channel-search results. |
 | `search:cooking:5` | Adds the first 5 channel-search results. |
+| `gronkh(family)` | Adds the channel and puts it into the Dispatcharr channel profile `family`. |
+| `top:de:25(Livestreams, TV)` | Adds the top 25 German streams to both profiles. |
 
 Category and search names with commas are ambiguous in a free-text field. Put
 those tokens on their own line.
+
+## Channel Profiles
+
+Twitcharr can add its managed channels to Dispatcharr channel profiles
+automatically, so they no longer have to be assigned by hand after every sync:
+
+- **Global**: the **Channel profiles** setting takes a comma-separated list of
+  profile names. Every Twitcharr-managed channel is added to those profiles on
+  each sync. `*` means every existing profile.
+- **Per entry**: append `(profile1, profile2)` directly to a channel name or
+  discovery token (no space before the parenthesis). Those profiles apply to
+  all channels that entry resolves to, in addition to the global list.
+
+Profile names are matched case-insensitively against existing Dispatcharr
+profiles. Unknown names are reported in the sync result instead of being
+created, so a typo cannot silently create a new profile. Twitcharr only ever
+*adds* memberships: channels you manually removed or disabled in a profile
+stay that way.
 
 ## Settings
 
 | Setting | Default | Actual behavior |
 |---|---|---|
-| Twitch channels and discovery | empty | Login names, Twitch URLs, or discovery tokens. |
+| Twitch channels and discovery | empty | Login names, Twitch URLs, or discovery tokens. Append `(profile1, profile2)` to assign channel profiles per entry. |
 | Channel group | `Twitch` | Channel group used for Twitcharr-managed Channels. |
+| Channel profiles | empty | Comma-separated Dispatcharr channel profile names applied to every Twitcharr-managed channel. `*` selects all profiles. |
 | Starting channel number | `9000` | First number used for new Twitcharr Channels. Existing Twitcharr channel numbers are kept stable when possible. |
 | Connection bandwidth (Mbps) | `0` | `0` uses the last measured bandwidth value, or the plugin's conservative fallback. |
 | Bandwidth safety margin (%) | `50` | Extra headroom used by adaptive quality. Values are clamped to the supported range. |
@@ -114,8 +136,6 @@ those tokens on their own line.
 | Update ttv.lol | Checks GitHub and downloads the streamlink-ttvlol `twitch.py` file when changed. |
 | Uninstall | Deletes Twitcharr-managed Channels, Streams, StreamProfile, and EPG source rows, then refreshes Emby/Jellyfin if configured. Plugin files and settings remain. |
 
-When the plugin module is loaded, Twitcharr starts an in-process background
-scheduler. `Sync now` also ensures it is running.
 
 The scheduler:
 
