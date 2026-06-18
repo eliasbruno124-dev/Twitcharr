@@ -31,6 +31,9 @@ GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
 DONATE_URL = "https://paypal.me/eliasbruno124"
 OFFLINE_ARTWORK_URL = f"{GITHUB_RAW_URL}/twitcharr/assets/offline.png"
+EMBY_SAFE_QUALITY_CHAIN = (
+    "1080p30,1080p,720p30,720p,480p30,480p,360p30,360p,160p30,160p"
+)
 
 
 DEFAULT_TTVLOL_PROXY_SERVERS = (
@@ -450,6 +453,7 @@ def _run_setup(settings: dict) -> dict:
         low_latency=_bool_setting(settings, "enable_low_latency", True),
         fast_startup=_bool_setting(settings, "fast_startup", True),
     )
+    output_profile = streamlink_setup.get_or_create_media_server_output_profile()
 
     from . import epg
 
@@ -462,6 +466,8 @@ def _run_setup(settings: dict) -> dict:
         "ttvlol_release_tag": ttv_result.release_tag,
         "ttvlol_path": ttv_result.target_path,
         "stream_profile_id": profile.id,
+        "output_profile_id": output_profile.id,
+        "media_server_m3u_path": streamlink_setup.media_server_m3u_path(output_profile.id),
         "epg_source_id": source.id,
         "schedule": _ensure_schedule_running(),
     }
@@ -576,8 +582,14 @@ def _validate_settings(settings: dict) -> dict:
 
     quality = _text_setting(settings, "stream_quality", "adaptive", fallback_on_empty=True)
     valid_qualities = {
-        "adaptive", "best", "1080p60", "1080p", "720p60", "720p",
-        "480p", "360p", "160p", "worst",
+        "adaptive", "best",
+        "1080p60", "1080p30", "1080p",
+        "720p60", "720p30", "720p",
+        "480p30", "480p",
+        "360p30", "360p",
+        "160p30", "160p",
+        "worst",
+        EMBY_SAFE_QUALITY_CHAIN,
     }
     if quality not in valid_qualities:
         warnings.append(f"Unknown stream quality '{quality}' will be passed to Streamlink as-is.")
@@ -688,7 +700,13 @@ def _run_measure_bandwidth(settings: dict) -> dict:
             low_latency=_bool_setting(effective_settings, "enable_low_latency", True),
             fast_startup=_bool_setting(effective_settings, "fast_startup", True),
         )
-        profile_update = {"stream_profile_updated": True, "stream_profile_id": profile.id}
+        output_profile = streamlink_setup.get_or_create_media_server_output_profile()
+        profile_update = {
+            "stream_profile_updated": True,
+            "stream_profile_id": profile.id,
+            "output_profile_id": output_profile.id,
+            "media_server_m3u_path": streamlink_setup.media_server_m3u_path(output_profile.id),
+        }
     except Exception as exc:
         logger.exception("Could not update StreamProfile after bandwidth probe")
         profile_update = {"stream_profile_updated": False, "stream_profile_error": str(exc)}
@@ -1019,7 +1037,7 @@ def _ensure_schedule_running() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = str(_MANIFEST.get("version") or "1.3.0")
+    version = str(_MANIFEST.get("version") or "1.3.1")
     description = (
         "Twitch Live TV for Dispatcharr with anonymous metadata, Streamlink "
         "playback, XMLTV guide data and channel sync. No Twitch sign-in required."

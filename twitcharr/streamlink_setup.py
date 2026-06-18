@@ -21,6 +21,18 @@ from .epg import TVG_ID_PREFIX, channel_tvg_id
 logger = logging.getLogger(__name__)
 
 PROFILE_NAME = "Twitcharr (ad-free, low-latency)"
+OUTPUT_PROFILE_NAME = "Twitcharr Emby AAC Video First"
+OUTPUT_PROFILE_COMMAND = "ffmpeg"
+OUTPUT_PROFILE_PARAMETERS = (
+    "-fflags +discardcorrupt+genpts+nobuffer "
+    "-probesize 512K -analyzeduration 0 "
+    "-i pipe:0 "
+    "-map 0:v:0 -map 0:a:0 "
+    "-c:v copy -c:a aac -b:a 192k -ac 2 "
+    "-max_muxing_queue_size 4096 -flush_packets 1 "
+    "-mpegts_flags +pat_pmt_at_frames+resend_headers+initial_discontinuity "
+    "-f mpegts pipe:1"
+)
 OWNER_TAG = "twitcharr"
 LEGACY_PLACEHOLDER_TVG_ID = "twitch._placeholder_"
 MAX_DB_URL_LENGTH = 500
@@ -165,6 +177,32 @@ def get_or_create_stream_profile(
         },
     )
     return profile
+
+
+def get_or_create_media_server_output_profile():
+    """Create the Emby/Jellyfin-safe OutputProfile used by Twitcharr M3Us.
+
+    Twitch/Streamlink can expose fMP4 streams as audio first and video second.
+    Emby clients are much more reliable when the final MPEG-TS has video at
+    index 0 and AAC stereo audio at index 1, matching Dispatcharr's stable IPTV
+    output shape.
+    """
+    from core.models import OutputProfile
+
+    profile, _ = OutputProfile.objects.update_or_create(
+        name=OUTPUT_PROFILE_NAME,
+        defaults={
+            "command": OUTPUT_PROFILE_COMMAND,
+            "parameters": OUTPUT_PROFILE_PARAMETERS,
+            "is_active": True,
+            "locked": False,
+        },
+    )
+    return profile
+
+
+def media_server_m3u_path(output_profile_id: int | str) -> str:
+    return f"/output/m3u?tvg_id_source=tvg_id&output_profile={output_profile_id}"
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +411,7 @@ def sync_channels(
         low_latency=low_latency,
         fast_startup=fast_startup,
     )
+    output_profile = get_or_create_media_server_output_profile()
     group = _channel_group(group_name)
     custom_account = _custom_m3u_account()
 
@@ -538,6 +577,8 @@ def sync_channels(
         "logos_pruned": pruned_logos,
         "channel_names": synced_logins,
         "stream_profile_id": profile.id,
+        "output_profile_id": output_profile.id,
+        "media_server_m3u_path": media_server_m3u_path(output_profile.id),
         "channel_group_id": group.id,
         "profile_memberships_added": memberships_added,
     }
@@ -601,7 +642,7 @@ def _prune_leaked_logos() -> int:
 def uninstall_managed_objects() -> dict:
     from apps.channels.models import Channel, Stream
     from apps.epg.models import EPGSource
-    from core.models import StreamProfile
+    from core.models import OutputProfile, StreamProfile
     from django.db.models import Q
 
     streams = Stream.objects.filter(
@@ -619,6 +660,7 @@ def uninstall_managed_objects() -> dict:
     streams.delete()
 
     profile_count = StreamProfile.objects.filter(name=PROFILE_NAME).delete()[0]
+    output_profile_count = OutputProfile.objects.filter(name=OUTPUT_PROFILE_NAME).delete()[0]
 
     from .epg import EPG_SOURCE_NAME
 
@@ -634,6 +676,7 @@ def uninstall_managed_objects() -> dict:
         "channels_deleted": channel_count,
         "streams_deleted": stream_count,
         "stream_profile_deleted": profile_count,
+        "output_profile_deleted": output_profile_count,
         "epg_source_deleted": source_count,
         "logos_deleted": logo_count,
     }
