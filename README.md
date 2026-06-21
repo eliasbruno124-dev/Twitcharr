@@ -23,7 +23,7 @@ and use configured ttv.lol playlist proxies.
 | Dispatcharr objects | Creates and updates Twitcharr-owned Channels, Streams, a Channel Group, an EPG source, one StreamProfile, and an Emby-safe OutputProfile. |
 | Guide data | Writes Dispatcharr `EPGData` / `ProgramData` rows and `<data_dir>/twitch.xmltv`. |
 | ttv.lol | Downloads or refreshes `twitch.py` from streamlink-ttvlol when requested and during scheduled checks. |
-| Offline channels | **Show offline channels** remains available, but its default is off. Turn it on to keep offline streamers in the lineup. |
+| Offline channels | **Show offline channels** is on by default so Emby/Jellyfin lineups stay stable. Turn it off for a live-only lineup. |
 | Images | Uses Twitch category artwork for live entries when available, and Twitch profile images for offline entries. |
 | Media servers | Can trigger the Emby/Jellyfin `Refresh Guide` scheduled task when URL and API key are configured. |
 | Diagnostics | Provides proxy reachability and bandwidth measurement actions. There is no separate full health-check action in the plugin UI. |
@@ -62,17 +62,35 @@ EPG source, guide rows, Channels, Streams, and the background scheduler. If no
 Twitch channels are configured, setup still prepares the StreamProfile,
 OutputProfile, EPG source, ttv.lol file, and scheduler.
 
-For Emby or Jellyfin, use the Twitcharr media-server M3U with the managed
-OutputProfile:
+For Emby or Jellyfin, the safest option is the Twitcharr media-server M3U with
+the managed OutputProfile and MPEG-TS forced:
 
 ```text
-http://dispatcharr:9191/output/m3u?tvg_id_source=tvg_id&output_profile=<output_profile_id>
+http://dispatcharr:9191/output/m3u?tvg_id_source=tvg_id&output_format=mpegts&output_profile=<output_profile_id>
 ```
 
 The `<output_profile_id>` is returned by **Sync now**, **Sync channels** and
 **Measure bandwidth** as `output_profile_id`. This profile maps Twitch output
 to video-first MPEG-TS with AAC stereo audio, which avoids the audio-first
 Streamlink layout that some Emby clients reject.
+
+If you use Emby's HDHomeRun tuner mode instead of M3U, use the returned
+`media_server_hdhr_discover_path`. Dispatcharr's HDHR endpoint carries the
+OutputProfile in the URL and uses Dispatcharr's default output format, which
+should stay `mpegts` for Emby/Jellyfin:
+
+```text
+http://dispatcharr:9191/hdhr/output_profile/<output_profile_id>/discover.json
+```
+
+Twitcharr's action results include `media_server_hdhr_safe`. If that is `false`,
+use the M3U URL above or set Dispatcharr's default output format back to
+`mpegts` before using the HDHomeRun URL.
+
+When **Emby / Jellyfin URL** and **API key** are configured, Twitcharr also
+checks `/LiveTv/TunerHosts` before each media-server refresh. Any M3U tuner
+whose required tags include `Twitch` is updated to the safe M3U URL above, so
+newly discovered Twitch channels do not fall back to an old tuner URL.
 
 Do not paste OAuth tokens, Client IDs, API keys, or Twitch account credentials into
 the channel field. Twitcharr ignores those and reports a settings error for obvious
@@ -124,12 +142,12 @@ stay that way.
 | Channel group | `Twitch` | Channel group used for Twitcharr-managed Channels. |
 | Channel profiles | empty | Comma-separated Dispatcharr channel profile names applied to every Twitcharr-managed channel. `*` selects all profiles. |
 | Starting channel number | `9000` | First number used for new Twitcharr Channels. Existing Twitcharr channel numbers are kept stable when possible. |
-| Stream quality | `adaptive` | Adaptive prefers Emby-safe non-60fps fallback chains. Use **Emby safe (30fps fallback)** for a fixed robust chain, or choose an explicit Streamlink quality. |
+| Stream quality | `adaptive` | Adaptive chooses the best stream variant your bandwidth can sustain, including 60fps HD when Twitch offers no 30fps HD variant. Use **Emby safe (30fps fallback)** to force a fixed 30fps-oriented chain. |
 | Connection bandwidth (Mbps) | `0` | `0` uses the last measured bandwidth value, or the plugin's conservative fallback. |
 | Bandwidth safety margin (%) | `50` | Extra headroom used by adaptive quality. Values are clamped to the supported range. |
 | Fastest possible startup | `true` | Uses shorter Streamlink timeouts and more aggressive HLS startup options. |
 | Low-latency mode | `true` | Enables Streamlink's Twitch low-latency options. |
-| Show offline channels | `false` | Offline configured channels are pruned during sync. Turn on to keep offline streamers in the lineup with offline guide data. |
+| Show offline channels | `true` | Offline configured channels stay in the lineup with offline guide data. Turn off to prune offline streamers during sync. |
 | EPG refresh interval (minutes) | `2` | Background scheduler interval for Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV. Minimum is 1 minute. |
 | ttv.lol proxy servers | `https://eu.luminous.dev,https://eu2.luminous.dev,https://lb-eu.cdn-perfprod.com,https://lb-eu2.cdn-perfprod.com` | Comma-separated proxy playlist URLs passed to Streamlink. Empty disables proxy playlist use. |
 | Emby / Jellyfin URL | empty | Optional media-server base URL. |
@@ -161,10 +179,10 @@ The scheduled ttv.lol refresh remains active.
 
 ## Offline Behavior
 
-`Show offline channels` controls configured streamer channels and is off by default:
+`Show offline channels` controls configured streamer channels and is on by default:
 
-- Off: offline streamers are removed during sync and recreated when they are live again.
 - On: offline streamers stay in the Dispatcharr lineup with offline guide data.
+- Off: offline streamers are removed during sync and recreated when they are live again.
 
 If `Show offline channels` is off and nobody in the configured lineup is live,
 Twitcharr prunes its managed Channels/Streams instead of creating a placeholder
@@ -194,7 +212,7 @@ still control their own caching and display timing.
 | No channels appear | Add valid channel names or discovery tokens, then run **Sync now**. |
 | OAuth/API-key confusion | Remove Twitch credentials from the channel field. Twitcharr does not use Twitch credentials. |
 | Offline channels do not disappear | Turn **Show offline channels** off, then run **Sync channels**. |
-| Streams do not start | Confirm Streamlink exists in the Dispatcharr container, then run **Update ttv.lol** and **Test proxies**. For Emby/Jellyfin, make sure the tuner uses the Twitcharr M3U with `output_profile=<output_profile_id>`. |
+| Streams do not start | Confirm Streamlink exists in the Dispatcharr container, then run **Update ttv.lol** and **Test proxies**. For Emby/Jellyfin, make sure the tuner uses the Twitcharr M3U with `output_format=mpegts&output_profile=<output_profile_id>`. Twitcharr auto-updates M3U tuners tagged `Twitch` when the media-server URL and API key are configured. If using HDHomeRun, use the Twitcharr HDHR discover URL with `/output_profile/<output_profile_id>/` and confirm `media_server_hdhr_safe` is `true`. |
 | Proxy playback is unreliable | Remove dead proxies, reorder the list, or clear the proxy field to stop passing proxy playlist URLs to Streamlink. |
 | Guide looks stale | Run **Refresh guide** or **Sync channels**. For Emby/Jellyfin, also run **Refresh Emby / Jellyfin**. |
 | Emby/Jellyfin does not update | Set both media-server URL and API key, then run **Refresh Emby / Jellyfin**. |

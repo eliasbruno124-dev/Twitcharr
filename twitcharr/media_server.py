@@ -12,15 +12,18 @@ The same code path works for:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 15
+TUNER_HOST_TIMEOUT = 6
 IMAGE_WARM_TIMEOUT = 6
 IMAGE_WARM_LIMIT = 80
 # Hard wall-clock budget for the whole warmup. Without it, a slow or
@@ -29,6 +32,7 @@ IMAGE_WARM_LIMIT = 80
 # web request when the user clicks a sync action.
 IMAGE_WARM_BUDGET_S = 25
 GUIDE_TASK_KEY = "RefreshGuide"
+TWITCH_TUNER_TAG = "twitch"
 
 
 def _headers(api_key: str) -> dict[str, str]:
@@ -56,6 +60,139 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [i for i in payload if isinstance(i, dict)]
     return []
+
+
+def _provider_options(host: dict[str, Any]) -> dict[str, Any]:
+    options = host.get("ProviderOptions") or {}
+    if isinstance(options, str):
+        try:
+            parsed = json.loads(options)
+            return parsed if isinstance(parsed, dict) else {}
+        except ValueError:
+            return {}
+    return options if isinstance(options, dict) else {}
+
+
+def _is_twitcharr_tuner_host(host: dict[str, Any]) -> bool:
+    if str(host.get("Type") or "").lower() != "m3u":
+        return False
+    options = _provider_options(host)
+    raw_tags = options.get("RequiredTags") or []
+    if isinstance(raw_tags, str):
+        raw_tags = [part.strip() for part in raw_tags.split(",") if part.strip()]
+    required_tags = [str(tag).strip().lower() for tag in raw_tags]
+    return TWITCH_TUNER_TAG in required_tags
+
+
+def _safe_m3u_url(existing_url: str, safe_m3u_path: str) -> str:
+    current = urlsplit((existing_url or "").strip())
+    safe = urlsplit((safe_m3u_path or "").strip())
+    if not current.scheme or not current.netloc or not safe.path:
+        return ""
+    return urlunsplit((current.scheme, current.netloc, safe.path, safe.query, safe.fragment))
+
+
+def ensure_twitcharr_m3u_tuner(*, base_url: str, api_key: str, safe_m3u_path: str) -> dict[str, Any]:
+    """Update Emby/Jellyfin M3U tuner hosts tagged for Twitcharr to the safe URL."""
+    base = _normalize_url(base_url)
+    key = (api_key or "").strip()
+    path = (safe_m3u_path or "").strip()
+    if not base or not key or not path:
+        return {"status": "skipped", "message": "Media-server URL, API key or M3U path not configured"}
+
+    headers = _headers(key)
+    headers["Content-Type"] = "application/json"
+
+    try:
+        resp = requests.get(f"{base}/LiveTv/TunerHosts", headers=headers, timeout=TUNER_HOST_TIMEOUT)
+    except requests.RequestException as exc:
+        return {"status": "error", "message": f"Cannot list tuner hosts: {exc}"}
+
+    if resp.status_code == 404:
+        return {"status": "skipped", "message": "Server does not expose /LiveTv/TunerHosts"}
+    if resp.status_code == 401:
+        return {"status": "error", "message": "Authentication rejected while checking tuner hosts"}
+    if resp.status_code != 200:
+        return {"status": "error", "message": f"GET /LiveTv/TunerHosts failed ({resp.status_code})"}
+
+    try:
+        payload = resp.json()
+    except ValueError:
+        return {"status": "error", "message": "Server returned non-JSON for /LiveTv/TunerHosts"}
+    if isinstance(payload, dict):
+        hosts = _extract_items(payload)
+    elif isinstance(payload, list):
+        hosts = payload
+    else:
+        return {"status": "error", "message": "Unexpected /LiveTv/TunerHosts response shape"}
+
+    checked = 0
+    updated: list[dict[str, str]] = []
+    unchanged: list[str] = []
+    errors: list[str] = []
+    for host in hosts:
+        if not isinstance(host, dict) or not _is_twitcharr_tuner_host(host):
+            continue
+        checked += 1
+        host_id = str(host.get("Id") or "")
+        old_url = str(host.get("Url") or "")
+        new_url = _safe_m3u_url(old_url, path)
+        if not new_url:
+            errors.append(f"{host_id or 'unknown'}: cannot build safe tuner URL")
+            continue
+        if old_url == new_url:
+            unchanged.append(host_id)
+            continue
+
+        payload = dict(host)
+        payload["Url"] = new_url
+        update_error = ""
+        for method in ("POST", "PUT"):
+            try:
+                update_resp = requests.request(
+                    method,
+                    f"{base}/LiveTv/TunerHosts",
+                    headers=headers,
+                    data=json.dumps(payload),
+                    timeout=TUNER_HOST_TIMEOUT,
+                )
+            except requests.RequestException as exc:
+                update_error = str(exc)
+                continue
+            if update_resp.status_code in (200, 204):
+                updated.append({"id": host_id, "old_url": old_url, "new_url": new_url})
+                update_error = ""
+                break
+            update_error = f"{method} returned {update_resp.status_code}: {update_resp.text[:160]}"
+        if update_error:
+            errors.append(f"{host_id or 'unknown'}: {update_error}")
+
+    if errors:
+        return {
+            "status": "error",
+            "message": "Could not update every Twitcharr tuner host",
+            "checked": checked,
+            "updated": updated,
+            "unchanged": unchanged,
+            "errors": errors,
+        }
+    if updated:
+        return {
+            "status": "ok",
+            "message": f"Updated {len(updated)} Twitcharr tuner host(s) to the safe M3U URL",
+            "checked": checked,
+            "updated": updated,
+            "unchanged": unchanged,
+        }
+    if checked:
+        return {
+            "status": "ok",
+            "message": "Twitcharr tuner host already uses the safe M3U URL",
+            "checked": checked,
+            "updated": [],
+            "unchanged": unchanged,
+        }
+    return {"status": "skipped", "message": "No M3U tuner host with RequiredTags including Twitch found"}
 
 
 def _wait_for_task_idle(base: str, headers: dict[str, str], task_id: str, *, max_seconds: int = 12) -> bool:
@@ -143,7 +280,14 @@ def warm_live_tv_image_cache(*, base_url: str, api_key: str, max_images: int = I
     }
 
 
-def trigger_guide_refresh(*, base_url: str, api_key: str) -> dict[str, Any]:
+def trigger_guide_refresh(
+    *,
+    base_url: str,
+    api_key: str,
+    safe_m3u_path: str = "",
+    ensure_tuner: bool = True,
+    warm_images: bool = True,
+) -> dict[str, Any]:
     """Trigger the Live TV guide refresh on Emby or Jellyfin.
 
     Returns a dict with `status` ("ok" / "skipped" / "error") and a `message`.
@@ -155,6 +299,14 @@ def trigger_guide_refresh(*, base_url: str, api_key: str) -> dict[str, Any]:
         return {"status": "skipped", "message": "Emby/Jellyfin URL or API key not configured"}
 
     headers = _headers(key)
+    tuner_update = ensure_twitcharr_m3u_tuner(
+        base_url=base,
+        api_key=key,
+        safe_m3u_path=safe_m3u_path,
+    ) if ensure_tuner and safe_m3u_path else {
+        "status": "skipped",
+        "message": "Tuner host check skipped",
+    }
 
     try:
         list_resp = requests.get(f"{base}/ScheduledTasks", headers=headers, timeout=DEFAULT_TIMEOUT)
@@ -203,7 +355,11 @@ def trigger_guide_refresh(*, base_url: str, api_key: str) -> dict[str, Any]:
 
     if run_resp.status_code in (200, 204):
         _wait_for_task_idle(base, headers, task_id)
-        warmup = warm_live_tv_image_cache(base_url=base, api_key=key)
+        warmup = (
+            warm_live_tv_image_cache(base_url=base, api_key=key)
+            if warm_images
+            else {"status": "skipped", "message": "Image cache warmup skipped"}
+        )
         logger.info("Triggered Emby/Jellyfin guide refresh on %s (task=%s)", base, task_id)
         return {
             "status": "ok",
@@ -213,6 +369,7 @@ def trigger_guide_refresh(*, base_url: str, api_key: str) -> dict[str, Any]:
             ),
             "task_id": task_id,
             "task_name": target.get("Name", ""),
+            "tuner_update": tuner_update,
             "image_cache": warmup,
         }
 

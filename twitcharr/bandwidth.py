@@ -38,12 +38,14 @@ DEFAULT_PROBES = 2  # take the *minimum* throughput across N back-to-back probes
 
 
 # (label, approx upstream bitrate Mbps) — Twitch's published live encoder
-# targets. Order matters: highest quality first. Adaptive mode intentionally
-# prefers non-60fps labels for Emby/Jellyfin compatibility; users can still
-# choose explicit 60fps qualities from the plugin settings.
+# targets. Order matters: highest quality first, with bitrate never increasing
+# after a lower tier. Some streams expose HD only as 60fps labels; adaptive
+# must include those or it can fall all the way back to 480p on a fast link.
 _TWITCH_VARIANT_BITRATES: list[tuple[str, float]] = [
+    ("1080p60", 6.0),
     ("1080p30", 4.5),
     ("1080p", 4.5),
+    ("720p60", 4.5),
     ("720p30", 3.0),
     ("720p", 3.0),
     ("480p30", 1.5),
@@ -164,8 +166,9 @@ def quality_chain_for_bandwidth(
     """
     if mbps <= 0:
         # No reading — be conservative: pick a mid-tier chain that survives
-        # most home connections without pushing 60fps Twitch variants.
-        return "720p30,720p,480p30,480p,360p30,360p,best"
+        # most home connections; keep 720p60 after the 30fps labels so HD-only
+        # 60fps streams do not drop straight to 480p.
+        return "720p30,720p,720p60,480p30,480p,360p30,360p,best"
 
     margin = max(0, min(200, int(safety_margin_pct))) / 100.0
     chain: list[str] = []

@@ -62,7 +62,7 @@
         {"value": "160p", "label": "160p"},
         {"value": "worst", "label": "Worst"}
       ],
-      "description": "Adaptive chooses the best Emby-safe stream variant your connection can sustain. Fixed values and fallback chains are passed directly to Streamlink."
+      "description": "Adaptive chooses the best stream variant your connection can sustain, including 60fps HD when Twitch offers no 30fps HD variant. Fixed values and fallback chains are passed directly to Streamlink."
     },
     {
       "id": "connection_bandwidth_mbps",
@@ -96,8 +96,8 @@
       "id": "include_offline",
       "label": "Show offline channels",
       "type": "boolean",
-      "default": false,
-      "description": "Keep offline streamers in the lineup. When disabled, offline channels are removed and recreated when they go live."
+      "default": true,
+      "description": "Keep offline streamers in the lineup for a stable Emby/Jellyfin channel list. When disabled, offline channels are removed and recreated when they go live."
     },
     {
       "id": "epg_refresh_interval_minutes",

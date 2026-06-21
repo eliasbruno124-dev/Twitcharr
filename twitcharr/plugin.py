@@ -47,7 +47,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "channel_profiles": "",
     "starting_channel_number": 9000,
     "data_dir": "/app/data/plugins/twitcharr",
-    "include_offline": False,
+    "include_offline": True,
     "epg_refresh_interval_minutes": 2,
     "ttvlol_proxy_servers": DEFAULT_TTVLOL_PROXY_SERVERS,
     "stream_quality": "adaptive",
@@ -260,7 +260,7 @@ def _gather_entries(settings: dict, *, client=None):
     entries = epg.build_entries(
         client,
         logins,
-        include_offline=_bool_setting(settings, "include_offline", False),
+        include_offline=_bool_setting(settings, "include_offline", True),
         offline_icon_url=_offline_icon_url(settings, cache_bust=cache_bust),
         offline_program_icon_url=_offline_program_icon_url(settings, cache_bust=cache_bust),
         use_live_thumbnails=False,
@@ -394,7 +394,7 @@ def _run_refresh_epg(settings: dict, *, prebuilt=None) -> dict:
     }
 
 
-def _run_sync_channels(settings: dict, *, prebuilt=None) -> dict:
+def _run_sync_channels(settings: dict, *, prebuilt=None, warm_images: bool = True) -> dict:
     from . import epg
 
     if prebuilt is None:
@@ -412,16 +412,19 @@ def _run_sync_channels(settings: dict, *, prebuilt=None) -> dict:
     # programmes for that tvg_id; if it loses that race the channel sits
     # without guide data until the next cycle. Heal those immediately.
     heal_result = epg.ensure_programs(entries, _data_dir(settings))
-    media_server_refresh = _trigger_media_server(settings)
-    if (result.get("channels_created") or 0) > 0 and media_server_refresh.get("status") == "ok":
+    created_channels = (result.get("channels_created") or 0) > 0
+    first_media_server_refresh: dict[str, Any] | None = None
+    media_server_refresh = _trigger_media_server(settings, warm_images=warm_images and not created_channels)
+    if created_channels and media_server_refresh.get("status") == "ok":
         # Emby/Jellyfin discovers brand-new channels on the first guide
         # refresh but often fills their programmes only on the next one.
         # trigger_guide_refresh waits for the task to go idle, so a second
         # trigger here closes that gap instead of waiting a full cycle.
-        media_server_refresh = _trigger_media_server(settings)
+        first_media_server_refresh = media_server_refresh
+        media_server_refresh = _trigger_media_server(settings, ensure_tuner=False, warm_images=warm_images)
     if not entries:
         result["message"] = "Nothing live right now. Offline channels pruned."
-    return {
+    response = {
         "status": "ok",
         "channels_synced": len(result.get("channel_names") or []),
         "guide": guide_result,
@@ -431,6 +434,9 @@ def _run_sync_channels(settings: dict, *, prebuilt=None) -> dict:
         "media_server_status": media_server_refresh.get("status"),
         **result,
     }
+    if first_media_server_refresh:
+        response["media_server_first_refresh"] = first_media_server_refresh
+    return response
 
 
 def _run_setup(settings: dict) -> dict:
@@ -466,8 +472,7 @@ def _run_setup(settings: dict) -> dict:
         "ttvlol_release_tag": ttv_result.release_tag,
         "ttvlol_path": ttv_result.target_path,
         "stream_profile_id": profile.id,
-        "output_profile_id": output_profile.id,
-        "media_server_m3u_path": streamlink_setup.media_server_m3u_path(output_profile.id),
+        **streamlink_setup.media_server_integration_info(output_profile.id),
         "epg_source_id": source.id,
         "schedule": _ensure_schedule_running(),
     }
@@ -525,15 +530,30 @@ def _run_all(settings: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _trigger_media_server(settings: dict) -> dict:
+def _trigger_media_server(
+    settings: dict,
+    *,
+    ensure_tuner: bool = True,
+    warm_images: bool = True,
+) -> dict:
     url = _text_setting(settings, "media_server_url")
     key = _text_setting(settings, "media_server_api_key")
     if not url or not key:
         return {"status": "skipped", "message": "No Emby/Jellyfin URL or API key configured"}
     try:
-        from . import media_server
+        from . import media_server, streamlink_setup
 
-        return media_server.trigger_guide_refresh(base_url=url, api_key=key)
+        safe_m3u_path = ""
+        if ensure_tuner:
+            output_profile = streamlink_setup.get_or_create_media_server_output_profile()
+            safe_m3u_path = streamlink_setup.media_server_m3u_path(output_profile.id)
+        return media_server.trigger_guide_refresh(
+            base_url=url,
+            api_key=key,
+            safe_m3u_path=safe_m3u_path,
+            ensure_tuner=ensure_tuner,
+            warm_images=warm_images,
+        )
     except Exception as exc:
         logger.exception("Media-server guide refresh failed")
         return {"status": "error", "message": str(exc)}
@@ -704,8 +724,7 @@ def _run_measure_bandwidth(settings: dict) -> dict:
         profile_update = {
             "stream_profile_updated": True,
             "stream_profile_id": profile.id,
-            "output_profile_id": output_profile.id,
-            "media_server_m3u_path": streamlink_setup.media_server_m3u_path(output_profile.id),
+            **streamlink_setup.media_server_integration_info(output_profile.id),
         }
     except Exception as exc:
         logger.exception("Could not update StreamProfile after bandwidth probe")
@@ -740,7 +759,7 @@ def _run_uninstall(settings: dict) -> dict:
 
     _stop_scheduler()
     uninstall_result = streamlink_setup.uninstall_managed_objects()
-    refresh = _trigger_media_server(settings)
+    refresh = _trigger_media_server(settings, ensure_tuner=False, warm_images=False)
     return {
         "status": "ok",
         "message": (
@@ -920,7 +939,7 @@ def _run_scheduled_tick() -> None:
                     _save_schedule_state(settings, state)
                 else:
                     prebuilt = _gather_entries(settings)
-                    sync_result = _run_sync_channels(settings, prebuilt=prebuilt)
+                    sync_result = _run_sync_channels(settings, prebuilt=prebuilt, warm_images=False)
                     state = _load_schedule_state(settings)
                     state.update({
                         "last_epg_refresh": int(time.time()),

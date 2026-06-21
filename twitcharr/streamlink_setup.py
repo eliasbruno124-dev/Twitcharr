@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import shlex
+from urllib.parse import urlencode
 
 from django.db import transaction
 
@@ -23,11 +24,12 @@ logger = logging.getLogger(__name__)
 PROFILE_NAME = "Twitcharr (ad-free, low-latency)"
 OUTPUT_PROFILE_NAME = "Twitcharr Emby AAC Video First"
 OUTPUT_PROFILE_COMMAND = "ffmpeg"
+MEDIA_SERVER_OUTPUT_FORMAT = "mpegts"
 OUTPUT_PROFILE_PARAMETERS = (
     "-fflags +discardcorrupt+genpts+nobuffer "
     "-probesize 512K -analyzeduration 0 "
     "-i pipe:0 "
-    "-map 0:v:0 -map 0:a:0 "
+    "-map 0:v:0 -map 0:a:0? -sn -dn "
     "-c:v copy -c:a aac -b:a 192k -ac 2 "
     "-max_muxing_queue_size 4096 -flush_packets 1 "
     "-mpegts_flags +pat_pmt_at_frames+resend_headers+initial_discontinuity "
@@ -202,7 +204,46 @@ def get_or_create_media_server_output_profile():
 
 
 def media_server_m3u_path(output_profile_id: int | str) -> str:
-    return f"/output/m3u?tvg_id_source=tvg_id&output_profile={output_profile_id}"
+    query = urlencode({
+        "tvg_id_source": "tvg_id",
+        # Emby/Jellyfin Live TV is most reliable with MPEG-TS. Do not inherit
+        # a Dispatcharr server/user default of fMP4 for media-server tuners.
+        "output_format": MEDIA_SERVER_OUTPUT_FORMAT,
+        "output_profile": output_profile_id,
+    })
+    return f"/output/m3u?{query}"
+
+
+def media_server_hdhr_discover_path(output_profile_id: int | str) -> str:
+    return f"/hdhr/output_profile/{output_profile_id}/discover.json"
+
+
+def media_server_integration_info(output_profile_id: int | str) -> dict:
+    """Return media-server paths plus the HDHR output-format safety status."""
+    info = {
+        "output_profile_id": output_profile_id,
+        "media_server_output_format": MEDIA_SERVER_OUTPUT_FORMAT,
+        "media_server_m3u_path": media_server_m3u_path(output_profile_id),
+        "media_server_hdhr_discover_path": media_server_hdhr_discover_path(output_profile_id),
+        "media_server_hdhr_safe": True,
+    }
+    try:
+        from core.models import CoreSettings
+
+        default_format = (CoreSettings.get_default_output_format() or "").strip().lower()
+        info["dispatcharr_default_output_format"] = default_format or None
+        info["dispatcharr_hdhr_output_profile_id"] = CoreSettings.get_hdhr_output_profile_id()
+        if default_format and default_format != MEDIA_SERVER_OUTPUT_FORMAT:
+            info["media_server_hdhr_safe"] = False
+            info["media_server_hdhr_warning"] = (
+                "Dispatcharr's default output format is not MPEG-TS. "
+                "Use media_server_m3u_path for Emby/Jellyfin, or set Dispatcharr's "
+                "default output format to mpegts before using the HDHomeRun URL."
+            )
+    except Exception as exc:
+        logger.warning("Could not inspect Dispatcharr media-server defaults: %s", exc)
+        info["media_server_hdhr_default_check"] = "unavailable"
+    return info
 
 
 # ---------------------------------------------------------------------------
@@ -577,8 +618,7 @@ def sync_channels(
         "logos_pruned": pruned_logos,
         "channel_names": synced_logins,
         "stream_profile_id": profile.id,
-        "output_profile_id": output_profile.id,
-        "media_server_m3u_path": media_server_m3u_path(output_profile.id),
+        **media_server_integration_info(output_profile.id),
         "channel_group_id": group.id,
         "profile_memberships_added": memberships_added,
     }
