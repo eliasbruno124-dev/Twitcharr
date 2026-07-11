@@ -712,7 +712,23 @@ def _prune_owned_orphaned_logos(previously_managed_logo_ids: set[int]) -> int:
 # Uninstall
 # ---------------------------------------------------------------------------
 
-@transaction.atomic
+def _stop_proxy_sessions(channel_uuids) -> int:
+    try:
+        from apps.proxy.live_proxy.services.channel_service import ChannelService
+    except Exception:
+        logger.exception("Could not load Dispatcharr proxy service before uninstall")
+        return 0
+
+    stopped = 0
+    for channel_uuid in channel_uuids:
+        try:
+            ChannelService.stop_channel(str(channel_uuid))
+            stopped += 1
+        except Exception:
+            logger.debug("No active proxy to stop for Twitcharr channel %s", channel_uuid)
+    return stopped
+
+
 def uninstall_managed_objects() -> dict:
     from apps.channels.models import Channel, Stream
     from apps.epg.models import EPGSource
@@ -728,6 +744,12 @@ def uninstall_managed_objects() -> dict:
             Q(logo__name__startswith="Twitcharr: ") | Q(logo__name__startswith="Twitch: ")
         ).exclude(logo_id__isnull=True).values_list("logo_id", flat=True)
     )
+    # Dispatcharr's Channel pre-delete signal stops active proxy sessions. If
+    # that happens inside Django's delete transaction, the proxy service may
+    # close the current DB connection and abort the collector with
+    # "Cannot open a new connection in an atomic block". Stop every managed
+    # proxy first, in autocommit mode, so the signal becomes a harmless no-op.
+    _stop_proxy_sessions(channels.values_list("uuid", flat=True))
     channels.delete()
     streams.delete()
 

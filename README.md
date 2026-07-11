@@ -9,14 +9,7 @@ Twitcharr reads public Twitch web metadata anonymously. Playback still depends o
 Streamlink inside the Dispatcharr container, and Twitch or proxy changes can break
 individual streams.
 
-Twitcharr automatically tracks the newest stable release of the third-party
-[`streamlink-ttvlol`](https://github.com/2bc4/streamlink-ttvlol) Streamlink plugin
-and uses configured ttv.lol playlist proxies. Twitcharr reads the release asset's
-SHA-256 digest from GitHub and refuses files whose hash, size, or Python syntax
-does not match the published release metadata.
-
-
-## What It Actually Does
+## Features
 
 | Area | Current behavior |
 |---|---|
@@ -30,8 +23,6 @@ does not match the published release metadata.
 | Offline channels | **Show offline channels** is on by default so Emby/Jellyfin lineups stay stable. Turn it off for a live-only lineup. |
 | Images | Uses stable Twitch channel avatars for channel logos by default and category artwork for programme images. Category logos remain selectable. |
 | Media servers | Can trigger the Emby/Jellyfin `Refresh Guide` scheduled task when URL and API key are configured. |
-| Diagnostics | Provides proxy reachability and bandwidth measurement actions. There is no separate full health-check action in the plugin UI. |
-
 
 ## Install
 
@@ -60,9 +51,13 @@ search:trymacs:5
 
 Then click **Sync now**.
 
-Version 1.3.2 defaults to XMLTV's `<live />` marker, real newlines in programme
-descriptions, and stable Twitch avatars for channel logos. The legacy red-dot,
-`<br />`, and category-logo behavior remains selectable in the settings.
+Global prefix and suffix settings apply to every channel. To format individual
+channels differently, add one template per line under **Per-channel name templates**:
+
+```text
+handofblood = TTV | {name}
+tolkin = {name} | TTV
+```
 
 `Sync now` creates or updates the StreamProfile, the Emby-safe OutputProfile,
 EPG source, guide rows, Channels, Streams, and the background scheduler. If no
@@ -76,28 +71,9 @@ the managed OutputProfile and MPEG-TS forced:
 http://dispatcharr:9191/output/m3u?tvg_id_source=tvg_id&output_format=mpegts&output_profile=<output_profile_id>
 ```
 
-The `<output_profile_id>` is returned by **Sync now**, **Sync channels** and
-**Measure bandwidth** as `output_profile_id`. This profile maps Twitch output
-to video-first MPEG-TS with AAC stereo audio, which avoids the audio-first
-Streamlink layout that some Emby clients reject.
-
-If you use Emby's HDHomeRun tuner mode instead of M3U, use the returned
-`media_server_hdhr_discover_path`. Dispatcharr's HDHR endpoint carries the
-OutputProfile in the URL and uses Dispatcharr's default output format, which
-should stay `mpegts` for Emby/Jellyfin:
-
-```text
-http://dispatcharr:9191/hdhr/output_profile/<output_profile_id>/discover.json
-```
-
-Twitcharr's action results include `media_server_hdhr_safe`. If that is `false`,
-use the M3U URL above or set Dispatcharr's default output format back to
-`mpegts` before using the HDHomeRun URL.
-
-When **Emby / Jellyfin URL** and **API key** are configured, Twitcharr also
-checks `/LiveTv/TunerHosts` before each media-server refresh. Any M3U tuner
-whose required tags include `Twitch` is updated to the safe M3U URL above, so
-newly discovered Twitch channels do not fall back to an old tuner URL.
+The `<output_profile_id>` is returned by **Sync now**, **Sync channels**, and
+**Measure bandwidth**. In Emby/Jellyfin, tag the Twitch M3U tuner with `Twitch`
+so Twitcharr can keep this URL up to date automatically.
 
 Do not paste OAuth tokens, Client IDs, API keys, or Twitch account credentials into
 the channel field. Twitcharr ignores those and reports a settings error for obvious
@@ -126,24 +102,6 @@ those tokens on their own line.
 Multi-language `top` tokens can be mixed with other comma-separated entries,
 for example `gronkh, top:de,en:25`.
 
-## Channel Profiles
-
-Twitcharr can add its managed channels to Dispatcharr channel profiles
-automatically, so they no longer have to be assigned by hand after every sync:
-
-- **Global**: the **Channel profiles** setting takes a comma-separated list of
-  profile names. Every Twitcharr-managed channel is added to those profiles on
-  each sync. `*` means every existing profile.
-- **Per entry**: append `(profile1, profile2)` directly to a channel name or
-  discovery token (no space before the parenthesis). Those profiles apply to
-  all channels that entry resolves to, in addition to the global list.
-
-Profile names are matched case-insensitively against existing Dispatcharr
-profiles. Unknown names are reported in the sync result instead of being
-created, so a typo cannot silently create a new profile. Twitcharr only ever
-*adds* memberships: channels you manually removed or disabled in a profile
-stay that way.
-
 ## Settings
 
 | Setting | Default | Actual behavior |
@@ -152,6 +110,7 @@ stay that way.
 | Channel group | `Twitch` | Channel group used for Twitcharr-managed Channels. |
 | Channel name prefix | empty | Optional text placed before every broadcaster name, for example `TTV \| `. |
 | Channel name suffix | empty | Optional text placed after every broadcaster name. |
+| Per-channel name templates | empty | Optional `login = template` lines such as `handofblood = TTV \| {name}`. These replace the global prefix/suffix only for that login. |
 | Channel profiles | empty | Comma-separated Dispatcharr channel profile names applied to every Twitcharr-managed channel. `*` selects all profiles. |
 | Starting channel number | `9000` | First number used for new Twitcharr Channels. Existing Twitcharr channel numbers are kept stable when possible. |
 | Stream quality | `adaptive` | Adaptive chooses the best stream variant your bandwidth can sustain, including 60fps HD when Twitch offers no 30fps HD variant. Use **Emby safe (30fps fallback)** to force a fixed 30fps-oriented chain. |
@@ -183,23 +142,6 @@ stay that way.
 | Update ttv.lol | Checks GitHub and installs or verifies the newest stable streamlink-ttvlol release, rejecting any SHA-256 mismatch. |
 | Uninstall | Deletes Twitcharr-managed Channels, Streams, StreamProfile, OutputProfile, and EPG source rows, then refreshes Emby/Jellyfin if configured. Plugin files and settings remain. |
 
-
-The scheduler:
-
-- refreshes Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV according to `EPG refresh interval`
-- skips guide syncs when no Twitch input is configured
-- checks for the newest stable ttv.lol plugin once per server-local day after midnight
-- stops scheduler threads from superseded Twitcharr module instances during an unmanaged upgrade
-
-The scheduled ttv.lol refresh remains active.
-
-### Verified ttv.lol updates
-
-Twitcharr requests the newest stable GitHub release, selects its `twitch.py`
-asset, and requires GitHub's `sha256:` asset digest before downloading. The file
-is installed atomically only when its size, digest, basic content, and Python
-syntax all match. A failed check leaves the previously installed file untouched.
-
 ## Offline Behavior
 
 `Show offline channels` controls configured streamer channels and is on by default:
@@ -224,30 +166,6 @@ Twitcharr writes guide data where Dispatcharr and TV clients expect it:
 - configurable plain-text description separators without requiring inline HTML
 - offline programme title `⚫ Offline` with Twitch profile artwork for offline streamers
 
-Twitcharr also avoids storing image URLs longer than Dispatcharr's 500-character
-database fields.
-
-For Emby and Jellyfin, Twitcharr only triggers `Refresh Guide`. Those servers
-still control their own caching and display timing.
-
-## Emby Validation
-
-The v1.3.2 integration was exercised with a live German-language Twitch channel
-through Dispatcharr and Emby. The following paths were verified:
-
-- live programme title with streamer, category, viewer count, and red-dot mode
-- programme descriptions rendered as separate lines without inline `<br />`
-- category artwork delivered at its native 272x380 aspect ratio
-- Emby playback reached a ready state without a media error and played an
-  unmuted 1920x1080 stream through Twitcharr's MPEG-TS OutputProfile
-- guide refreshes reached Emby after **Full refresh**
-
-The in-place upgrade test also reproduced the old-module scheduler collision:
-v1.3.1 could restore legacy `Offline` channel names and category logos after a
-v1.3.2 refresh. The scheduler hand-off described above is the v1.3.2 fix for
-that upgrade-only condition. After importing v1.3.2, follow the upgrade steps
-and run **Full refresh** before judging channel names or avatar changes in Emby.
-
 ## Troubleshooting
 
 | Problem | What to check |
@@ -255,11 +173,10 @@ and run **Full refresh** before judging channel names or avatar changes in Emby.
 | No channels appear | Add valid channel names or discovery tokens, then run **Sync now**. |
 | OAuth/API-key confusion | Remove Twitch credentials from the channel field. Twitcharr does not use Twitch credentials. |
 | Offline channels do not disappear | Turn **Show offline channels** off, then run **Sync channels**. |
-| Streams do not start | Confirm Streamlink exists in the Dispatcharr container, then run **Update ttv.lol** and **Test proxies**. For Emby/Jellyfin, make sure the tuner uses the Twitcharr M3U with `output_format=mpegts&output_profile=<output_profile_id>`. Twitcharr auto-updates M3U tuners tagged `Twitch` when the media-server URL and API key are configured. If using HDHomeRun, use the Twitcharr HDHR discover URL with `/output_profile/<output_profile_id>/` and confirm `media_server_hdhr_safe` is `true`. |
+| Streams do not start | Run **Update ttv.lol** and **Test proxies**. For Emby/Jellyfin, use the Twitcharr M3U with `output_format=mpegts&output_profile=<output_profile_id>`. |
 | Proxy playback is unreliable | Remove dead proxies, reorder the list, or clear the proxy field to stop passing proxy playlist URLs to Streamlink. |
 | Guide looks stale | Run **Refresh guide** or **Sync channels**. For Emby/Jellyfin, also run **Refresh Emby / Jellyfin**. |
 | Emby/Jellyfin does not update | Set both media-server URL and API key, then run **Refresh Emby / Jellyfin**. |
-| Channel names revert to `Offline` after an unmanaged upgrade | Enable only v1.3.2, disable the older Twitcharr entry, click **Reload** on the Plugins page, then run **Full refresh**. v1.3.2 stops the superseded scheduler in every worker that loads it. |
 | Adaptive quality is too high or too low | Run **Measure bandwidth**, set a manual bandwidth value, or adjust the safety margin. |
 
 ## Sources

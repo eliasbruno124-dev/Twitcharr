@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 
 GQL_URL = "https://gql.twitch.tv/gql"
 PUBLIC_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
-GQL_BATCH = 25
+# Twitch's anonymous GraphQL endpoint can silently truncate larger batched
+# channel lookups. Ten keeps configured lineups complete without extra auth.
+GQL_BATCH = 10
 DEFAULT_TIMEOUT = 15
 BOX_ART_SIZE_RE = re.compile(r"-\d+x\d+(?=\.[a-zA-Z0-9]+(?:\?|$))")
 # Trailing "(profile1, profile2)" on any channels-field token assigns the

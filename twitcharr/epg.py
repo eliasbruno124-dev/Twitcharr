@@ -29,6 +29,7 @@ EPG_SOURCE_NAME = "Twitch (managed by Twitcharr)"
 TVG_ID_PREFIX = "twitch."
 LIVE_PROGRAMME_HOURS = 24
 OFFLINE_PROGRAMME_HOURS = 24
+LIVE_PROGRAMME_START_BACKDATE_MINUTES = 1
 OFFLINE_PROGRAMME_START_BACKDATE_MINUTES = 5
 DESCRIPTION_SEPARATOR = "\n"
 MAX_DB_URL_LENGTH = 500
@@ -107,6 +108,26 @@ def xmltv_path(data_dir: str) -> str:
     return os.path.join(data_dir, "twitch.xmltv")
 
 
+def invalidate_dispatcharr_output_cache() -> dict[str, int | str]:
+    """Drop Dispatcharr's streamed `/output/epg` chunk cache.
+
+    Dispatcharr caches each generated XMLTV response in Redis for five
+    minutes. Without invalidation, an immediate Emby/Jellyfin Refresh Guide
+    can successfully complete while still importing the previous Twitcharr
+    title, description, or live marker.
+    """
+    try:
+        from django_redis import get_redis_connection
+
+        redis = get_redis_connection("default")
+        keys = list(redis.scan_iter(match="epg_content:*"))
+        deleted = int(redis.delete(*keys)) if keys else 0
+        return {"status": "ok", "keys_deleted": deleted}
+    except Exception as exc:
+        logger.exception("Could not invalidate Dispatcharr EPG output cache")
+        return {"status": "error", "keys_deleted": 0, "message": str(exc)}
+
+
 # ---------------------------------------------------------------------------
 # EPGSource bookkeeping
 # ---------------------------------------------------------------------------
@@ -171,6 +192,7 @@ def build_entries(
     profiles_by_login: dict[str, list[str]] | None = None,
     channel_name_prefix: str = "",
     channel_name_suffix: str = "",
+    channel_name_templates: dict[str, str] | None = None,
     live_indicator_mode: str = "xmltv",
     description_separator: str = DESCRIPTION_SEPARATOR,
     channel_logo_mode: str = "profile",
@@ -199,6 +221,17 @@ def build_entries(
     logo_mode = (channel_logo_mode or "profile").strip().lower()
     if logo_mode not in {"profile", "category"}:
         logo_mode = "profile"
+    name_templates = {
+        str(login).strip().lower(): str(template)
+        for login, template in (channel_name_templates or {}).items()
+        if str(login).strip() and "{name}" in str(template)
+    }
+
+    def channel_name_for(login: str, display_name: str) -> str:
+        template = name_templates.get(login.lower())
+        if template:
+            return template.replace("{name}", display_name)
+        return f"{channel_name_prefix}{display_name}{channel_name_suffix}"
 
     entries: list[dict] = []
     for login in logins:
@@ -264,7 +297,7 @@ def build_entries(
             if viewer_label:
                 title_parts.append(viewer_label)
             title = " • ".join(title_parts)
-            channel_name = f"{channel_name_prefix}{u.display_name}{channel_name_suffix}"
+            channel_name = channel_name_for(login, u.display_name)
 
             # Keep each metadata item on its own line so XMLTV/Dispatcharr
             # detail views do not collapse status, link and bio into a blob.
@@ -296,7 +329,7 @@ def build_entries(
             program_icon_url = _cache_bust_image_url(program_icon_stable, cache_bust)
             game_name = ""
             title = "⚫ Offline"
-            channel_name = f"{channel_name_prefix}{u.display_name}{channel_name_suffix}"
+            channel_name = channel_name_for(login, u.display_name)
             description_parts = [
                 "Status: Offline",
                 f"Link: https://twitch.tv/{login}",
@@ -372,12 +405,7 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
 
     programme_count = 0
     for e in entries:
-        if e["live"]:
-            start = _parse_iso(e["started_at"]) or now
-            end = now + timedelta(hours=LIVE_PROGRAMME_HOURS)
-        else:
-            start = now - timedelta(minutes=OFFLINE_PROGRAMME_START_BACKDATE_MINUTES)
-            end = now + timedelta(hours=OFFLINE_PROGRAMME_HOURS)
+        start, end = _programme_window(e, now)
 
         prog = ET.SubElement(tv, "programme", {
             "start": _xmltv_time(start),
@@ -424,9 +452,12 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
 
 def _programme_window(e: dict, now: datetime) -> tuple[datetime, datetime]:
     if e["live"]:
-        started = _parse_iso(e["started_at"]) or now
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=timezone.utc)
+        # Emby keys current guide items primarily by channel and start time.
+        # Reusing Twitch's original stream start for hours makes Emby retain
+        # an older title/description when a setting or stream metadata changes.
+        # A rolling current-programme window gives every refresh a fresh guide
+        # identity while the real Twitch uptime remains in the description.
+        started = now - timedelta(minutes=LIVE_PROGRAMME_START_BACKDATE_MINUTES)
         end = now + timedelta(hours=LIVE_PROGRAMME_HOURS)
     else:
         started = now - timedelta(minutes=OFFLINE_PROGRAMME_START_BACKDATE_MINUTES)
@@ -442,6 +473,11 @@ def _program_for_entry(e: dict, epg, now: datetime):
         "twitch_login": e["login"],
         "twitch_live": e["live"],
         "twitch_xmltv_live_tag": bool(e.get("emit_live_tag")),
+        # Dispatcharr's XMLTV output writer emits <live /> from the standard
+        # custom-properties key named "live".  Keep the Twitcharr-specific
+        # key above for diagnostics, but also populate the key consumed by
+        # /output/epg so Emby/Jellyfin receive the flag.
+        "live": bool(e.get("emit_live_tag")),
         "twitch_viewers": e["viewer_count"],
         "twitch_display_name": e["display_name"],
         "twitch_game_name": e["game_name"],

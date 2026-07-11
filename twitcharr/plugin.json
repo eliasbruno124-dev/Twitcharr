@@ -49,6 +49,14 @@
       "description": "Optional text added after every Twitch channel name. Spaces are preserved."
     },
     {
+      "id": "channel_name_overrides",
+      "label": "Per-channel name templates",
+      "type": "text",
+      "default": "",
+      "placeholder": "handofblood = TTV | {name}\ntolkin = {name} | TTV",
+      "description": "Optional per-channel templates that replace the global prefix/suffix for that login. Use one 'login = template' entry per line and include {name} where the Twitch display name should appear."
+    },
+    {
       "id": "starting_channel_number",
       "label": "Starting channel number",
       "type": "number",

@@ -92,7 +92,12 @@ def _safe_m3u_url(existing_url: str, safe_m3u_path: str) -> str:
     return urlunsplit((current.scheme, current.netloc, safe.path, safe.query, safe.fragment))
 
 
-def ensure_twitcharr_m3u_tuner(*, base_url: str, api_key: str, safe_m3u_path: str) -> dict[str, Any]:
+def ensure_twitcharr_m3u_tuner(
+    *,
+    base_url: str,
+    api_key: str,
+    safe_m3u_path: str,
+) -> dict[str, Any]:
     """Update Emby/Jellyfin M3U tuner hosts tagged for Twitcharr to the safe URL."""
     base = _normalize_url(base_url)
     key = (api_key or "").strip()
@@ -195,8 +200,31 @@ def ensure_twitcharr_m3u_tuner(*, base_url: str, api_key: str, safe_m3u_path: st
     return {"status": "skipped", "message": "No M3U tuner host with RequiredTags including Twitch found"}
 
 
-def _wait_for_task_idle(base: str, headers: dict[str, str], task_id: str, *, max_seconds: int = 12) -> bool:
+def _task_execution_marker(task: dict[str, Any] | None) -> tuple[str, str, str]:
+    result = (task or {}).get("LastExecutionResult") or {}
+    return (
+        str(result.get("StartTimeUtc") or ""),
+        str(result.get("EndTimeUtc") or ""),
+        str(result.get("Status") or ""),
+    )
+
+
+def _wait_for_task_idle(
+    base: str,
+    headers: dict[str, str],
+    task_id: str,
+    *,
+    previous_marker: tuple[str, str, str] = ("", "", ""),
+    max_seconds: int = 30,
+) -> bool:
+    """Wait until the newly-triggered task has actually run and gone idle.
+
+    Emby may acknowledge the trigger before changing the task state from
+    ``Idle`` to ``Running``. Treating that initial idle response as completion
+    leaves clients on the previous guide until the task eventually catches up.
+    """
     deadline = time.time() + max_seconds
+    saw_running = False
     while time.time() < deadline:
         try:
             resp = requests.get(f"{base}/ScheduledTasks", headers=headers, timeout=DEFAULT_TIMEOUT)
@@ -207,8 +235,11 @@ def _wait_for_task_idle(base: str, headers: dict[str, str], task_id: str, *, max
             return False
         task = next((t for t in tasks if t.get("Id") == task_id), None)
         state = str((task or {}).get("State") or "").lower()
-        if state and state not in {"running", "cancelling"}:
-            return True
+        marker = _task_execution_marker(task)
+        if state in {"running", "cancelling"}:
+            saw_running = True
+        elif state and (saw_running or marker != previous_marker):
+            return marker[2].lower() == "completed"
         time.sleep(1)
     return False
 
@@ -354,26 +385,41 @@ def trigger_guide_refresh(
         return {"status": "error", "message": f"Trigger request failed: {exc}"}
 
     if run_resp.status_code in (200, 204):
-        _wait_for_task_idle(base, headers, task_id)
+        previous_marker = _task_execution_marker(target)
+        guide_completed = _wait_for_task_idle(
+            base,
+            headers,
+            task_id,
+            previous_marker=previous_marker,
+        )
         warmup = (
             warm_live_tv_image_cache(base_url=base, api_key=key)
             if warm_images
             else {"status": "skipped", "message": "Image cache warmup skipped"}
         )
         logger.info("Triggered Emby/Jellyfin guide refresh on %s (task=%s)", base, task_id)
-        status = "partial" if tuner_update.get("status") == "error" else "ok"
+        status = (
+            "partial"
+            if tuner_update.get("status") == "error" or not guide_completed
+            else "ok"
+        )
         tuner_message = ""
         if tuner_update.get("status") == "error":
             tuner_message = f" Tuner update failed: {tuner_update.get('message', 'unknown error')}."
+        guide_message = ""
+        if not guide_completed:
+            guide_message = " Refresh Guide did not report a new completed run within 30 seconds."
         return {
             "status": status,
             "message": (
                 f"Triggered '{target.get('Name', 'Refresh Guide')}' on {base}; "
                 f"{warmup.get('message', 'image cache warmup checked')}."
                 f"{tuner_message}"
+                f"{guide_message}"
             ),
             "task_id": task_id,
             "task_name": target.get("Name", ""),
+            "guide_completed": guide_completed,
             "tuner_update": tuner_update,
             "image_cache": warmup,
         }

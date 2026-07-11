@@ -47,6 +47,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "channel_profiles": "",
     "channel_name_prefix": "",
     "channel_name_suffix": "",
+    "channel_name_overrides": "",
     "starting_channel_number": 9000,
     "data_dir": "/app/data/plugins/twitcharr",
     "include_offline": True,
@@ -106,6 +107,25 @@ def _raw_text_setting(settings: dict, key: str, default: str = "") -> str:
     """Return text without trimming meaningful prefix/suffix whitespace."""
     value = settings.get(key, default)
     return default if value is None else str(value)
+
+
+def _channel_name_templates(settings: dict) -> dict[str, str]:
+    """Parse `login = TTV | {name}` per-channel display templates."""
+    raw = _raw_text_setting(settings, "channel_name_overrides")
+    templates: dict[str, str] = {}
+    for line in raw.replace("\r", "\n").split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        separator = "=>" if "=>" in line else "="
+        if separator not in line:
+            continue
+        login, template = line.split(separator, 1)
+        login = login.strip().rstrip("/").rsplit("/", 1)[-1].lower()
+        template = template.strip()
+        if login.replace("_", "").isalnum() and "{name}" in template:
+            templates[login] = template
+    return templates
 
 
 def _bool_setting(settings: dict, key: str, default: bool = False) -> bool:
@@ -279,6 +299,7 @@ def _gather_entries(settings: dict, *, client=None):
         profiles_by_login=profiles_by_login,
         channel_name_prefix=_raw_text_setting(settings, "channel_name_prefix"),
         channel_name_suffix=_raw_text_setting(settings, "channel_name_suffix"),
+        channel_name_templates=_channel_name_templates(settings),
         live_indicator_mode=_text_setting(
             settings, "live_indicator_mode", DEFAULT_SETTINGS["live_indicator_mode"], fallback_on_empty=True
         ),
@@ -298,12 +319,14 @@ def _write_epg(settings: dict, entries: list[dict]) -> dict:
     data_dir = _data_dir(settings)
     channels, programmes = epg.write_xmltv(entries, epg.xmltv_path(data_dir))
     db_result = epg.upsert_db(entries, data_dir)
+    output_cache = epg.invalidate_dispatcharr_output_cache()
     return {
         "status": "ok",
         "message": f"Wrote guide for {channels} channels and {programmes} programmes.",
         "channels": channels,
         "programmes": programmes,
         "xmltv_path": epg.xmltv_path(data_dir),
+        "output_cache": output_cache,
         **db_result,
     }
 
@@ -434,16 +457,15 @@ def _run_sync_channels(settings: dict, *, prebuilt=None, warm_images: bool = Tru
     # programmes for that tvg_id; if it loses that race the channel sits
     # without guide data until the next cycle. Heal those immediately.
     initial_heal_result = epg.ensure_programs(entries, _data_dir(settings))
-    created_channels = (result.get("channels_created") or 0) > 0
+    changed_channels = (
+        (result.get("channels_created") or 0) > 0
+        or (result.get("channels_updated") or 0) > 0
+    )
     first_media_server_refresh: dict[str, Any] | None = None
-    media_server_refresh = _trigger_media_server(settings, warm_images=warm_images and not created_channels)
-    if created_channels and media_server_refresh.get("status") in {"ok", "partial"}:
-        # Emby/Jellyfin discovers brand-new channels on the first guide
-        # refresh but often fills their programmes only on the next one.
-        # trigger_guide_refresh waits for the task to go idle, so a second
-        # trigger here closes that gap instead of waiting a full cycle.
-        first_media_server_refresh = media_server_refresh
-        media_server_refresh = _trigger_media_server(settings, ensure_tuner=False, warm_images=warm_images)
+    media_server_refresh = _trigger_media_server(
+        settings,
+        warm_images=warm_images and not changed_channels,
+    )
 
     # Dispatcharr may finish an asynchronous EPG parse after the channel was
     # created. That parse can replace the fresh EPGData row or clear its
@@ -452,6 +474,17 @@ def _run_sync_channels(settings: dict, *, prebuilt=None, warm_images: bool = Tru
     # blocking media-server refresh has given those parse tasks time to settle.
     final_epg_link = epg.link_channels_to_epg(entries, _data_dir(settings))
     final_heal_result = epg.ensure_programs(entries, _data_dir(settings))
+    if changed_channels and media_server_refresh.get("status") in {"ok", "partial"}:
+        # Channel saves can schedule a Dispatcharr programme re-parse that
+        # finishes after the first Emby/Jellyfin refresh. Re-read the guide
+        # only after the final link/heal pass so clients cannot retain the
+        # previous title or description for the current programme.
+        first_media_server_refresh = media_server_refresh
+        media_server_refresh = _trigger_media_server(
+            settings,
+            ensure_tuner=False,
+            warm_images=warm_images,
+        )
     epg_link = {
         "checked_channels": max(
             initial_epg_link.get("checked_channels", 0),
@@ -685,6 +718,21 @@ def _validate_settings(settings: dict) -> dict:
     logo_mode = _text_setting(settings, "channel_logo_mode", "profile", fallback_on_empty=True)
     if logo_mode not in {"profile", "category"}:
         errors.append("Channel logo must be either profile or category.")
+
+    for line_number, line in enumerate(
+        _raw_text_setting(settings, "channel_name_overrides").replace("\r", "\n").split("\n"),
+        start=1,
+    ):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        separator = "=>" if "=>" in line else "="
+        if separator not in line or "{name}" not in line.split(separator, 1)[1]:
+            errors.append(
+                f"Per-channel name template on line {line_number} must use "
+                "'login = ... {name} ...'."
+            )
+            break
 
     return {
         "status": "error" if errors else ("warning" if warnings else "ok"),
