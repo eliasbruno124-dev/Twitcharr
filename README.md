@@ -43,21 +43,6 @@ does not match the published release metadata.
 4. Import the ZIP.
 5. Enable Twitcharr.
 
-### Upgrade from 1.3.1
-
-1. Import the v1.3.2 ZIP without deleting your existing settings or channels.
-2. Enable the v1.3.2 entry and disable any older unmanaged Twitcharr entry.
-3. Click **Reload** on the Dispatcharr Plugins page.
-4. Run **Full refresh** once.
-5. Confirm one live and one offline Twitch channel in Dispatcharr and in your
-   Emby/Jellyfin guide.
-
-Dispatcharr may temporarily show both unmanaged versions after a ZIP import.
-Only one entry should be enabled. v1.3.2 stops superseded Twitcharr scheduler
-threads in each worker so an already loaded v1.3.1 module cannot continue
-overwriting refreshed channel names or artwork.
-
-
 
 ## Quick Setup
 
