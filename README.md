@@ -11,9 +11,28 @@ individual streams.
 
 Twitcharr automatically tracks the newest stable release of the third-party
 [`streamlink-ttvlol`](https://github.com/2bc4/streamlink-ttvlol) Streamlink plugin
-and use configured ttv.lol playlist proxies. Twitcharr reads the release asset's
+and uses configured ttv.lol playlist proxies. Twitcharr reads the release asset's
 SHA-256 digest from GitHub and refuses files whose hash, size, or Python syntax
 does not match the published release metadata.
+
+## Version 1.3.2
+
+Version 1.3.2 implements the four requested guide and lineup features:
+
+- optional channel-name prefixes and suffixes, including correct broadcaster
+  names while offline ([#3](https://github.com/eliasbruno124-dev/Twitcharr/issues/3))
+- configurable XMLTV `<live />` and red-dot indicators
+  ([#4](https://github.com/eliasbruno124-dev/Twitcharr/issues/4))
+- configurable programme-description separators instead of a mandatory
+  `<br />` ([#5](https://github.com/eliasbruno124-dev/Twitcharr/issues/5))
+- Twitch channel avatars or game/category artwork as selectable channel logos,
+  while programme artwork continues to follow the category
+  ([#6](https://github.com/eliasbruno124-dev/Twitcharr/issues/6))
+
+It also makes unmanaged upgrades safer. A newly loaded Twitcharr instance stops
+scheduler threads left behind by an older loaded module, and channel sync runs a
+second EPG link/programme repair pass after Dispatcharr and the media server have
+finished their refresh work. Existing settings and channel numbers are retained.
 
 ## What It Actually Does
 
@@ -41,6 +60,20 @@ does not match the published release metadata.
 3. Go to Plugins.
 4. Import the ZIP.
 5. Enable Twitcharr.
+
+### Upgrade from 1.3.1
+
+1. Import the v1.3.2 ZIP without deleting your existing settings or channels.
+2. Enable the v1.3.2 entry and disable any older unmanaged Twitcharr entry.
+3. Click **Reload** on the Dispatcharr Plugins page.
+4. Run **Full refresh** once.
+5. Confirm one live and one offline Twitch channel in Dispatcharr and in your
+   Emby/Jellyfin guide.
+
+Dispatcharr may temporarily show both unmanaged versions after a ZIP import.
+Only one entry should be enabled. v1.3.2 stops superseded Twitcharr scheduler
+threads in each worker so an already loaded v1.3.1 module cannot continue
+overwriting refreshed channel names or artwork.
 
 
 
@@ -175,7 +208,7 @@ stay that way.
 |---|---|
 | Sync now | Updates ttv.lol if needed, creates StreamProfile, OutputProfile and EPG source, resolves Twitch inputs, writes guide data, syncs Channels/Streams, starts scheduler, and refreshes Emby/Jellyfin if configured. |
 | Refresh guide | Resolves Twitch inputs, writes XMLTV plus Dispatcharr EPG rows, opportunistically checks ttv.lol freshness, and refreshes Emby/Jellyfin if configured. |
-| Sync channels | Writes guide data, creates or updates Channels/Streams, links Channels to fresh EPG rows, prunes stale Twitcharr-owned Channels/Streams, and refreshes Emby/Jellyfin if configured. |
+| Sync channels | Writes guide data, creates or updates Channels/Streams, links Channels to fresh EPG rows, prunes stale Twitcharr-owned Channels/Streams, refreshes Emby/Jellyfin if configured, then repeats the EPG link/programme repair pass after refresh tasks settle. |
 | Full refresh | Runs ttv.lol update check, resolves Twitch inputs once, syncs Channels/Streams, writes guide data, and refreshes Emby/Jellyfin if configured. |
 | Measure bandwidth | Downloads a small Cloudflare speed-test payload, saves the measured Mbps value, recalculates adaptive quality, and updates the StreamProfile and media-server OutputProfile. |
 | Test proxies | Tests configured ttv.lol proxy URLs and reports reachability, HTTP status, and latency. |
@@ -189,6 +222,7 @@ The scheduler:
 - refreshes Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV according to `EPG refresh interval`
 - skips guide syncs when no Twitch input is configured
 - checks for the newest stable ttv.lol plugin once per server-local day after midnight
+- stops scheduler threads from superseded Twitcharr module instances during an unmanaged upgrade
 
 The scheduled ttv.lol refresh remains active.
 
@@ -229,6 +263,24 @@ database fields.
 For Emby and Jellyfin, Twitcharr only triggers `Refresh Guide`. Those servers
 still control their own caching and display timing.
 
+## Emby Validation
+
+The v1.3.2 integration was exercised with a live German-language Twitch channel
+through Dispatcharr and Emby. The following paths were verified:
+
+- live programme title with streamer, category, viewer count, and red-dot mode
+- programme descriptions rendered as separate lines without inline `<br />`
+- category artwork delivered at its native 272x380 aspect ratio
+- Emby playback reached a ready state without a media error and played an
+  unmuted 1920x1080 stream through Twitcharr's MPEG-TS OutputProfile
+- guide refreshes reached Emby after **Full refresh**
+
+The in-place upgrade test also reproduced the old-module scheduler collision:
+v1.3.1 could restore legacy `Offline` channel names and category logos after a
+v1.3.2 refresh. The scheduler hand-off described above is the v1.3.2 fix for
+that upgrade-only condition. After importing v1.3.2, follow the upgrade steps
+and run **Full refresh** before judging channel names or avatar changes in Emby.
+
 ## Troubleshooting
 
 | Problem | What to check |
@@ -240,6 +292,7 @@ still control their own caching and display timing.
 | Proxy playback is unreliable | Remove dead proxies, reorder the list, or clear the proxy field to stop passing proxy playlist URLs to Streamlink. |
 | Guide looks stale | Run **Refresh guide** or **Sync channels**. For Emby/Jellyfin, also run **Refresh Emby / Jellyfin**. |
 | Emby/Jellyfin does not update | Set both media-server URL and API key, then run **Refresh Emby / Jellyfin**. |
+| Channel names revert to `Offline` after an unmanaged upgrade | Enable only v1.3.2, disable the older Twitcharr entry, click **Reload** on the Plugins page, then run **Full refresh**. v1.3.2 stops the superseded scheduler in every worker that loads it. |
 | Adaptive quality is too high or too low | Run **Measure bandwidth**, set a manual bandwidth value, or adjust the safety margin. |
 
 ## Sources
