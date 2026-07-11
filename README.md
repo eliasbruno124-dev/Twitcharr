@@ -15,24 +15,6 @@ and uses configured ttv.lol playlist proxies. Twitcharr reads the release asset'
 SHA-256 digest from GitHub and refuses files whose hash, size, or Python syntax
 does not match the published release metadata.
 
-## Version 1.3.2
-
-Version 1.3.2 implements the four requested guide and lineup features:
-
-- optional channel-name prefixes and suffixes, including correct broadcaster
-  names while offline ([#3](https://github.com/eliasbruno124-dev/Twitcharr/issues/3))
-- configurable XMLTV `<live />` and red-dot indicators
-  ([#4](https://github.com/eliasbruno124-dev/Twitcharr/issues/4))
-- configurable programme-description separators instead of a mandatory
-  `<br />` ([#5](https://github.com/eliasbruno124-dev/Twitcharr/issues/5))
-- Twitch channel avatars or game/category artwork as selectable channel logos,
-  while programme artwork continues to follow the category
-  ([#6](https://github.com/eliasbruno124-dev/Twitcharr/issues/6))
-
-It also makes unmanaged upgrades safer. A newly loaded Twitcharr instance stops
-scheduler threads left behind by an older loaded module, and channel sync runs a
-second EPG link/programme repair pass after Dispatcharr and the media server have
-finished their refresh work. Existing settings and channel numbers are retained.
 
 ## What It Actually Does
 
