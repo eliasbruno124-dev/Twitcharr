@@ -17,7 +17,7 @@ from urllib.parse import urlencode
 from django.db import transaction
 
 from . import ttvlol
-from .epg import TVG_ID_PREFIX, channel_tvg_id
+from .epg import channel_tvg_id
 
 logger = logging.getLogger(__name__)
 
@@ -256,10 +256,14 @@ def _logo_for(login: str, display_name: str, icon_url: str):
     icon_url = _db_safe_url(icon_url)
     if not icon_url:
         return None
-    logo, _ = Logo.objects.update_or_create(
+    managed_name = f"Twitcharr: {display_name or login}"
+    logo, created = Logo.objects.get_or_create(
         url=icon_url,
-        defaults={"name": f"Twitch: {display_name or login}"},
+        defaults={"name": managed_name},
     )
+    if not created and logo.name.startswith(("Twitcharr: ", "Twitch: ")) and logo.name != managed_name:
+        logo.name = managed_name
+        logo.save(update_fields=["name"])
     return logo
 
 
@@ -415,6 +419,19 @@ def _delete_legacy_placeholder() -> tuple[int, int]:
     return channel_count, stream_count
 
 
+def _managed_logo_ids() -> set[int]:
+    """Return only logos currently attached to channels owned by Twitcharr."""
+    from apps.channels.models import Channel
+    from django.db.models import Q
+
+    return set(
+        Channel.objects.filter(streams__custom_properties__owner=OWNER_TAG)
+        .filter(Q(logo__name__startswith="Twitcharr: ") | Q(logo__name__startswith="Twitch: "))
+        .exclude(logo_id__isnull=True)
+        .values_list("logo_id", flat=True)
+    )
+
+
 @transaction.atomic
 def sync_channels(
     entries: list[dict],
@@ -463,10 +480,10 @@ def sync_channels(
     real_entries = list(entries)
     synced_tvg_ids: set[str] = {channel_tvg_id(e["login"]) for e in real_entries}
     legacy_placeholder_channels, legacy_placeholder_streams = _delete_legacy_placeholder()
+    previously_managed_logo_ids = _managed_logo_ids()
     pruned_channels, pruned_streams = _prune_unmanaged(synced_tvg_ids)
     pruned_channels += legacy_placeholder_channels
     pruned_streams += legacy_placeholder_streams
-    pruned_logos = _prune_leaked_logos()
 
     global_profile_names = [p for p in (profile_names or []) if (p or "").strip()]
     wants_profiles = bool(global_profile_names) or any(e.get("profiles") for e in real_entries)
@@ -491,7 +508,12 @@ def sync_channels(
     except Exception:
         logger.exception("Could not prefetch EPGData rows; channels will be linked after creation")
 
-    existing_channels = list(Channel.objects.filter(tvg_id__in=synced_tvg_ids))
+    existing_channels = list(
+        Channel.objects.filter(
+            tvg_id__in=synced_tvg_ids,
+            streams__custom_properties__owner=OWNER_TAG,
+        ).distinct()
+    )
     existing_by_tvg = {channel.tvg_id: channel for channel in existing_channels}
 
     # Keep existing channel numbers stable across syncs. Renumbering caused
@@ -501,7 +523,9 @@ def sync_channels(
     # next free slot above starting_channel_number; offline streamers leave
     # a numeric gap until they come back online.
     used_numbers: set[float] = set(
-        Channel.objects.exclude(tvg_id__in=synced_tvg_ids).values_list("channel_number", flat=True)
+        Channel.objects.exclude(id__in=[channel.id for channel in existing_channels]).values_list(
+            "channel_number", flat=True
+        )
     )
     for ch in existing_channels:
         if ch.channel_number:
@@ -543,7 +567,11 @@ def sync_channels(
                 "twitch_viewers": int(e.get("viewer_count") or 0),
             },
         }
-        stream = Stream.objects.filter(url=twitch_url, is_custom=True).first()
+        stream = Stream.objects.filter(
+            url=twitch_url,
+            is_custom=True,
+            custom_properties__owner=OWNER_TAG,
+        ).first()
         if stream:
             changed = _changed_fields(stream, stream_defaults)
             if changed:
@@ -601,6 +629,8 @@ def sync_channels(
 
         synced_logins.append(login)
 
+    pruned_logos = _prune_owned_orphaned_logos(previously_managed_logo_ids)
+
     message = f"Synced {len(synced_logins)} Twitch channels."
     if unknown_profiles:
         message += (
@@ -637,40 +667,44 @@ def _prune_unmanaged(keep_tvg_ids: set[str]) -> tuple[int, int]:
         .exclude(tvg_id__in=keep_tvg_ids)
         .distinct()
     )
-    stale_tvg_ids = list(stale_channels.values_list("tvg_id", flat=True))
     channel_count = stale_channels.count()
     stale_channels.delete()
 
-    stream_count = 0
-    if stale_tvg_ids:
-        stale_streams = Stream.objects.filter(
-            custom_properties__owner=OWNER_TAG,
-            tvg_id__in=stale_tvg_ids,
-        )
-        stream_count = stale_streams.count()
+    stale_streams = Stream.objects.filter(
+        custom_properties__owner=OWNER_TAG,
+    ).exclude(tvg_id__in=keep_tvg_ids)
+    stream_count = stale_streams.count()
+    if stream_count:
         stale_streams.delete()
 
     return channel_count, stream_count
 
 
-def _prune_leaked_logos() -> int:
-    """Delete unused cache-busted Logo rows minted by older Twitcharr versions.
+def _prune_owned_orphaned_logos(previously_managed_logo_ids: set[int]) -> int:
+    """Delete orphaned logos that were demonstrably owned by Twitcharr.
 
-    Logo.url is unique and earlier releases stored the per-cycle cache-busted
-    artwork URL, so every refresh added one new Logo row per channel. Once
-    channels point at stable URLs these rows are orphans and safe to drop.
+    Capturing IDs before channel/logo updates lets category mode change artwork
+    without leaking one Logo row per category. The second query removes the
+    unmistakable cache-busted rows created by Twitcharr releases before 1.3.0.
     """
     from apps.channels.models import Logo
 
-    stale = Logo.objects.filter(
+    owned = Logo.objects.filter(
+        id__in=previously_managed_logo_ids,
+        channels__isnull=True,
+    )
+    legacy = Logo.objects.filter(
         name__startswith="Twitch: ",
         url__contains="twarr_ts=",
         channels__isnull=True,
     )
-    count = stale.count()
+    owned_ids = set(owned.values_list("id", flat=True))
+    legacy_ids = set(legacy.values_list("id", flat=True))
+    stale_ids = owned_ids | legacy_ids
+    count = len(stale_ids)
     if count:
-        stale.delete()
-        logger.info("Pruned %d leaked cache-busted Twitch logos", count)
+        Logo.objects.filter(id__in=stale_ids).delete()
+        logger.info("Pruned %d orphaned Twitcharr logos", count)
     return count
 
 
@@ -684,18 +718,16 @@ def uninstall_managed_objects() -> dict:
     from apps.epg.models import EPGSource
     from core.models import OutputProfile, StreamProfile
     from django.db.models import Q
-
-    streams = Stream.objects.filter(
-        Q(custom_properties__owner=OWNER_TAG)
-        | Q(tvg_id__startswith=TVG_ID_PREFIX)
-    ).distinct()
+    streams = Stream.objects.filter(custom_properties__owner=OWNER_TAG).distinct()
     stream_count = streams.count()
 
-    channels = Channel.objects.filter(
-        Q(streams__custom_properties__owner=OWNER_TAG)
-        | Q(tvg_id__startswith=TVG_ID_PREFIX)
-    ).distinct()
+    channels = Channel.objects.filter(streams__custom_properties__owner=OWNER_TAG).distinct()
     channel_count = channels.count()
+    managed_logo_ids = set(
+        channels.filter(
+            Q(logo__name__startswith="Twitcharr: ") | Q(logo__name__startswith="Twitch: ")
+        ).exclude(logo_id__isnull=True).values_list("logo_id", flat=True)
+    )
     channels.delete()
     streams.delete()
 
@@ -709,7 +741,7 @@ def uninstall_managed_objects() -> dict:
     from apps.channels.models import Logo
 
     logo_count = Logo.objects.filter(
-        name__startswith="Twitch: ", channels__isnull=True
+        id__in=managed_logo_ids, channels__isnull=True
     ).delete()[0]
 
     return {

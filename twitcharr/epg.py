@@ -16,7 +16,6 @@ import os
 import tempfile
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
-from typing import Iterable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from django.db import transaction
@@ -31,7 +30,7 @@ TVG_ID_PREFIX = "twitch."
 LIVE_PROGRAMME_HOURS = 24
 OFFLINE_PROGRAMME_HOURS = 24
 OFFLINE_PROGRAMME_START_BACKDATE_MINUTES = 5
-DESCRIPTION_SEPARATOR = "<br />"
+DESCRIPTION_SEPARATOR = "\n"
 MAX_DB_URL_LENGTH = 500
 
 # Twitch's CDN preview URL for any live channel. The CDN refreshes the JPEG
@@ -93,9 +92,15 @@ def channel_tvg_id(login: str) -> str:
     return f"{TVG_ID_PREFIX}{login.lower()}"
 
 
-def _join_description(parts: list[str]) -> str:
+def decode_description_separator(value: str | None) -> str:
+    """Decode the two useful escapes supported by the single-line setting."""
+    raw = DESCRIPTION_SEPARATOR if value is None else str(value)
+    return raw.replace(r"\n", "\n").replace(r"\t", "\t")
+
+
+def _join_description(parts: list[str], separator: str = DESCRIPTION_SEPARATOR) -> str:
     cleaned = [part.strip() for part in parts if (part or "").strip()]
-    return DESCRIPTION_SEPARATOR.join(cleaned)
+    return separator.join(cleaned)
 
 
 def xmltv_path(data_dir: str) -> str:
@@ -164,6 +169,11 @@ def build_entries(
     use_live_thumbnails: bool = False,
     cache_bust: int = 0,
     profiles_by_login: dict[str, list[str]] | None = None,
+    channel_name_prefix: str = "",
+    channel_name_suffix: str = "",
+    live_indicator_mode: str = "xmltv",
+    description_separator: str = DESCRIPTION_SEPARATOR,
+    channel_logo_mode: str = "profile",
 ) -> list[dict]:
     """Returns a list of dicts, one per channel.
 
@@ -182,6 +192,13 @@ def build_entries(
 
     offline_icon = (offline_icon_url or "").strip()
     offline_program_icon = (offline_program_icon_url or offline_icon_url or "").strip()
+    separator = decode_description_separator(description_separator)
+    indicator_mode = (live_indicator_mode or "xmltv").strip().lower()
+    if indicator_mode not in {"xmltv", "emoji", "both", "none"}:
+        indicator_mode = "xmltv"
+    logo_mode = (channel_logo_mode or "profile").strip().lower()
+    if logo_mode not in {"profile", "category"}:
+        logo_mode = "profile"
 
     entries: list[dict] = []
     for login in logins:
@@ -215,14 +232,17 @@ def build_entries(
             else:
                 program_icon_url = ""
 
-            # Channel/overview artwork follows the current category/game too.
-            # Profile pictures are only a fallback when Twitch has no box art.
-            if game and game.box_art_url:
+            # Channel logos default to the stable broadcaster avatar. Category
+            # mode remains available for users who prefer dynamic artwork;
+            # programme artwork always continues to represent the category.
+            if logo_mode == "category" and game and game.box_art_url:
+                icon_url = tw.render_box_art(game.box_art_url)
+            elif u.profile_image_url:
+                icon_url = u.profile_image_url
+            elif game and game.box_art_url:
                 icon_url = tw.render_box_art(game.box_art_url)
             elif program_icon_url:
                 icon_url = program_icon_url
-            elif u.profile_image_url:
-                icon_url = u.profile_image_url
             else:
                 icon_url = ""
 
@@ -235,11 +255,16 @@ def build_entries(
             viewer_label = _viewer_label(s.viewer_count)
 
             # Programme title: the at-a-glance line shown in the channel grid.
-            title_parts = [f"🔴 {u.display_name}", game_name or "Live"]
+            display_title = (
+                f"🔴 {u.display_name}"
+                if indicator_mode in {"emoji", "both"}
+                else u.display_name
+            )
+            title_parts = [display_title, game_name or "Live"]
             if viewer_label:
                 title_parts.append(viewer_label)
             title = " • ".join(title_parts)
-            channel_name = u.display_name
+            channel_name = f"{channel_name_prefix}{u.display_name}{channel_name_suffix}"
 
             # Keep each metadata item on its own line so XMLTV/Dispatcharr
             # detail views do not collapse status, link and bio into a blob.
@@ -257,7 +282,7 @@ def build_entries(
                 description_parts.append(f"Live: {uptime_str}")
             if (u.description or "").strip():
                 description_parts.append(f"Bio: {(u.description or '').strip()}")
-            description = _join_description(description_parts)
+            description = _join_description(description_parts, separator)
             started_at = s.started_at
             viewers = s.viewer_count
         else:
@@ -265,19 +290,20 @@ def build_entries(
             # tiles. Custom offline SVG/PNG placeholders can lag or break in
             # this view, so offline channels use the streamer's profile image
             # while the programme title carries the offline state.
-            icon_url_stable = u.profile_image_url
-            icon_url = _cache_bust_image_url(u.profile_image_url, cache_bust)
-            program_icon_url = icon_url
+            icon_url_stable = u.profile_image_url or offline_icon
+            icon_url = _cache_bust_image_url(icon_url_stable, cache_bust)
+            program_icon_stable = u.profile_image_url or offline_program_icon
+            program_icon_url = _cache_bust_image_url(program_icon_stable, cache_bust)
             game_name = ""
             title = "⚫ Offline"
-            channel_name = "Offline"
+            channel_name = f"{channel_name_prefix}{u.display_name}{channel_name_suffix}"
             description_parts = [
                 "Status: Offline",
                 f"Link: https://twitch.tv/{login}",
             ]
             if (u.description or "").strip():
                 description_parts.append(f"Bio: {(u.description or '').strip()}")
-            description = _join_description(description_parts)
+            description = _join_description(description_parts, separator)
             stream_title = ""
             viewer_label = ""
             started_at = ""
@@ -294,6 +320,7 @@ def build_entries(
             "program_icon_url": program_icon_url,
             "description": description,
             "live": live,
+            "emit_live_tag": live and indicator_mode in {"xmltv", "both"},
             "title": title,
             "stream_title": stream_title,
             "game_name": game_name,
@@ -329,7 +356,7 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
     now = datetime.now(timezone.utc)
     tv = ET.Element("tv", {
         "generator-info-name": "Twitcharr",
-        "generator-info-url": "https://github.com/eliasbruno124-dev/Dispatcharr-Twitch-EPG",
+        "generator-info-url": "https://github.com/eliasbruno124-dev/Twitcharr",
     })
 
     for e in entries:
@@ -364,6 +391,8 @@ def write_xmltv(entries: list[dict], path: str) -> tuple[int, int]:
             ET.SubElement(prog, "category", {"lang": "en"}).text = e["game_name"]
         if e.get("live"):
             ET.SubElement(prog, "category", {"lang": "en"}).text = "Live"
+        if e.get("emit_live_tag"):
+            ET.SubElement(prog, "live")
         if e.get("twitch_url"):
             ET.SubElement(prog, "url").text = e["twitch_url"]
         program_icon_url = e.get("program_icon_url") or ""
@@ -412,6 +441,7 @@ def _program_for_entry(e: dict, epg, now: datetime):
     custom_properties = {
         "twitch_login": e["login"],
         "twitch_live": e["live"],
+        "twitch_xmltv_live_tag": bool(e.get("emit_live_tag")),
         "twitch_viewers": e["viewer_count"],
         "twitch_display_name": e["display_name"],
         "twitch_game_name": e["game_name"],
@@ -481,7 +511,10 @@ def upsert_db(entries: list[dict], data_dir: str) -> dict:
     linked_channels = 0
     for tvg, epg in epg_rows.items():
         updated = (
-            Channel.objects.filter(tvg_id=tvg)
+            Channel.objects.filter(
+                tvg_id=tvg,
+                streams__custom_properties__owner="twitcharr",
+            )
             .exclude(epg_data_id=epg.id)
             .update(epg_data=epg)
         )
@@ -527,7 +560,10 @@ def link_channels_to_epg(entries: list[dict], data_dir: str) -> dict:
     linked_channels = 0
     for tvg, epg in epg_rows.items():
         linked_channels += (
-            Channel.objects.filter(tvg_id=tvg)
+            Channel.objects.filter(
+                tvg_id=tvg,
+                streams__custom_properties__owner="twitcharr",
+            )
             .exclude(epg_data_id=epg.id)
             .update(epg_data=epg)
         )

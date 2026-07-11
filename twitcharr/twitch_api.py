@@ -185,7 +185,7 @@ class TwitchClient:
 
     # ------------------------------------------------------------------ users
     def _fetch_channels(self, logins: Sequence[str]) -> None:
-        clean = [l.strip().lower() for l in logins if l and l.strip()]
+        clean = [login.strip().lower() for login in logins if login and login.strip()]
         missing = [login for login in clean if login not in self._fetched_logins]
         for batch in _chunks(missing, GQL_BATCH):
             payload = [
@@ -279,7 +279,7 @@ class TwitchClient:
         try:
             variables: dict = {"limit": int(max(1, min(100, limit)))}
             if languages:
-                variables["languages"] = [l.upper() for l in languages if l]
+                variables["languages"] = [language.upper() for language in languages if language]
             else:
                 variables["languages"] = None
             data = self._post_gql({
@@ -405,41 +405,24 @@ def _iter_input_tokens(raw: str):
         line = line.strip()
         if not line:
             continue
-        if _should_keep_comma_token(line):
-            yield line
-            continue
-        for part in _split_commas_outside_parens(line):
-            part = part.strip()
-            if part:
-                yield part
+        parts = [part.strip() for part in _split_commas_outside_parens(line) if part.strip()]
+        index = 0
+        while index < len(parts):
+            token = parts[index]
+            if token.lower().startswith("top:"):
+                while index + 1 < len(parts) and not _top_token_has_limit(token):
+                    continuation, _profiles = _split_profiles_suffix(parts[index + 1])
+                    if not re.fullmatch(r"[A-Za-z][A-Za-z-]{1,4}(?::\d+)?", continuation):
+                        break
+                    index += 1
+                    token = f"{token},{parts[index]}"
+            yield token
+            index += 1
 
 
-def _should_keep_comma_token(line: str) -> bool:
-    """Keep `top:de,en:50` intact while allowing comma-separated logins.
-
-    Category/search names with commas are ambiguous in a free-text textarea; put
-    those discovery tokens on their own line without extra comma-separated items.
-    """
-    base, _ = _split_profiles_suffix(line)
-    low = base.lower()
-    if not low.startswith("top:") or "," not in base:
-        return False
-
-    rest = base[4:].strip()
-    if not rest:
-        return False
-    parts = [p.strip() for p in rest.split(":") if p.strip()]
-    if not parts:
-        return False
-    for part in parts:
-        if part.isdigit():
-            continue
-        codes = [c.strip() for c in part.split(",") if c.strip()]
-        if not codes:
-            return False
-        if any(not c.replace("-", "").isalpha() for c in codes):
-            return False
-    return True
+def _top_token_has_limit(token: str) -> bool:
+    base, _profiles = _split_profiles_suffix(token)
+    return any(part.strip().isdigit() for part in base[4:].split(":"))
 
 
 def _parse_single_token(t: str) -> dict | None:

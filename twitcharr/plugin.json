@@ -1,6 +1,6 @@
 {
   "name": "Twitcharr",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "A polished Twitch Live TV lineup for Dispatcharr. Add channels or discovery rules, then sync channels, streams and XMLTV guide data using anonymous Twitch metadata only. No OAuth, Client ID, Client Secret or Twitch sign-in required.",
   "author": "eliasbruno124",
   "maintainers": ["eliasbruno124-dev"],
@@ -31,6 +31,22 @@
       "type": "text",
       "default": "Twitch",
       "description": "Channel group used for all Twitcharr-managed channels in Dispatcharr."
+    },
+    {
+      "id": "channel_name_prefix",
+      "label": "Channel name prefix",
+      "type": "string",
+      "default": "",
+      "placeholder": "TTV | ",
+      "description": "Optional text added before every Twitch channel name. Spaces are preserved."
+    },
+    {
+      "id": "channel_name_suffix",
+      "label": "Channel name suffix",
+      "type": "string",
+      "default": "",
+      "placeholder": " | Twitch",
+      "description": "Optional text added after every Twitch channel name. Spaces are preserved."
     },
     {
       "id": "starting_channel_number",
@@ -100,6 +116,38 @@
       "description": "Keep offline streamers in the lineup for a stable Emby/Jellyfin channel list. When disabled, offline channels are removed and recreated when they go live."
     },
     {
+      "id": "live_indicator_mode",
+      "label": "Live indicator",
+      "type": "select",
+      "default": "xmltv",
+      "options": [
+        {"value": "xmltv", "label": "XMLTV <live /> tag"},
+        {"value": "emoji", "label": "Red dot in programme title"},
+        {"value": "both", "label": "XMLTV tag and red dot"},
+        {"value": "none", "label": "No live indicator"}
+      ],
+      "description": "Controls whether live programmes use the XMLTV <live /> element, the red dot title prefix, both, or neither."
+    },
+    {
+      "id": "description_separator",
+      "label": "Programme description separator",
+      "type": "string",
+      "default": "\\n",
+      "placeholder": "\\n",
+      "description": "Text inserted between description lines. Use \\n for a real newline, a space or dash for plain text, <br /> for legacy HTML, or leave empty to join without a separator."
+    },
+    {
+      "id": "channel_logo_mode",
+      "label": "Channel logo",
+      "type": "select",
+      "default": "profile",
+      "options": [
+        {"value": "profile", "label": "Twitch channel avatar"},
+        {"value": "category", "label": "Current game/category artwork"}
+      ],
+      "description": "Uses a stable Twitch avatar for the channel logo by default. Programme artwork continues to use the current game/category."
+    },
+    {
       "id": "epg_refresh_interval_minutes",
       "label": "EPG refresh interval (minutes)",
       "type": "number",
@@ -125,7 +173,8 @@
     {
       "id": "media_server_api_key",
       "label": "Emby / Jellyfin API key",
-      "type": "text",
+      "type": "string",
+      "input_type": "password",
       "default": "",
       "placeholder": "abcdef0123456789...",
       "description": "Required when an Emby or Jellyfin URL is set. This is your media-server API key, not a Twitch token."
@@ -198,8 +247,8 @@
     {
       "id": "update_ttvlol",
       "label": "Update ttv.lol",
-      "description": "Checks for a new ttv.lol Streamlink plugin release and downloads it when an update is available for playback.",
-      "button_label": "Update ttv.lol",
+      "description": "Checks GitHub for the newest stable ttv.lol release and installs it only after its published SHA-256 digest and Python syntax validate.",
+      "button_label": "Verify ttv.lol",
       "button_variant": "outline",
       "button_color": "blue"
     },

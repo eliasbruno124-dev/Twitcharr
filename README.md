@@ -9,9 +9,11 @@ Twitcharr reads public Twitch web metadata anonymously. Playback still depends o
 Streamlink inside the Dispatcharr container, and Twitch or proxy changes can break
 individual streams.
 
-Twitcharr can download the third-party
+Twitcharr automatically tracks the newest stable release of the third-party
 [`streamlink-ttvlol`](https://github.com/2bc4/streamlink-ttvlol) Streamlink plugin
-and use configured ttv.lol playlist proxies.
+and use configured ttv.lol playlist proxies. Twitcharr reads the release asset's
+SHA-256 digest from GitHub and refuses files whose hash, size, or Python syntax
+does not match the published release metadata.
 
 ## What It Actually Does
 
@@ -19,12 +21,13 @@ and use configured ttv.lol playlist proxies.
 |---|---|
 | Channel input | Accepts Twitch login names and Twitch URLs, separated by commas, semicolons, or line breaks. |
 | Discovery | Supports `top`, `top:25`, `top:de:25`, `top:de,en:50`, `game:Just Chatting:10`, and `search:gronkh:5`. |
+| Channel names | Supports an optional prefix and suffix while retaining the broadcaster name when offline. |
 | Channel profiles | Adds managed channels to Dispatcharr channel profiles: globally via the **Channel profiles** setting, per entry via `name(profile1, profile2)`. |
 | Dispatcharr objects | Creates and updates Twitcharr-owned Channels, Streams, a Channel Group, an EPG source, one StreamProfile, and an Emby-safe OutputProfile. |
 | Guide data | Writes Dispatcharr `EPGData` / `ProgramData` rows and `<data_dir>/twitch.xmltv`. |
-| ttv.lol | Downloads or refreshes `twitch.py` from streamlink-ttvlol when requested and during scheduled checks. |
+| ttv.lol | Checks for and installs the newest stable streamlink-ttvlol release after SHA-256 verification. |
 | Offline channels | **Show offline channels** is on by default so Emby/Jellyfin lineups stay stable. Turn it off for a live-only lineup. |
-| Images | Uses Twitch category artwork for live entries when available, and Twitch profile images for offline entries. |
+| Images | Uses stable Twitch channel avatars for channel logos by default and category artwork for programme images. Category logos remain selectable. |
 | Media servers | Can trigger the Emby/Jellyfin `Refresh Guide` scheduled task when URL and API key are configured. |
 | Diagnostics | Provides proxy reachability and bandwidth measurement actions. There is no separate full health-check action in the plugin UI. |
 
@@ -56,6 +59,10 @@ search:trymacs:5
 ```
 
 Then click **Sync now**.
+
+Version 1.3.2 defaults to XMLTV's `<live />` marker, real newlines in programme
+descriptions, and stable Twitch avatars for channel logos. The legacy red-dot,
+`<br />`, and category-logo behavior remains selectable in the settings.
 
 `Sync now` creates or updates the StreamProfile, the Emby-safe OutputProfile,
 EPG source, guide rows, Channels, Streams, and the background scheduler. If no
@@ -116,6 +123,9 @@ credential-looking input.
 Category and search names with commas are ambiguous in a free-text field. Put
 those tokens on their own line.
 
+Multi-language `top` tokens can be mixed with other comma-separated entries,
+for example `gronkh, top:de,en:25`.
+
 ## Channel Profiles
 
 Twitcharr can add its managed channels to Dispatcharr channel profiles
@@ -140,6 +150,8 @@ stay that way.
 |---|---|---|
 | Twitch channels and discovery | empty | Login names, Twitch URLs, or discovery tokens. Append `(profile1, profile2)` to assign channel profiles per entry. |
 | Channel group | `Twitch` | Channel group used for Twitcharr-managed Channels. |
+| Channel name prefix | empty | Optional text placed before every broadcaster name, for example `TTV \| `. |
+| Channel name suffix | empty | Optional text placed after every broadcaster name. |
 | Channel profiles | empty | Comma-separated Dispatcharr channel profile names applied to every Twitcharr-managed channel. `*` selects all profiles. |
 | Starting channel number | `9000` | First number used for new Twitcharr Channels. Existing Twitcharr channel numbers are kept stable when possible. |
 | Stream quality | `adaptive` | Adaptive chooses the best stream variant your bandwidth can sustain, including 60fps HD when Twitch offers no 30fps HD variant. Use **Emby safe (30fps fallback)** to force a fixed 30fps-oriented chain. |
@@ -148,6 +160,9 @@ stay that way.
 | Fastest possible startup | `true` | Uses shorter Streamlink timeouts and more aggressive HLS startup options. |
 | Low-latency mode | `true` | Enables Streamlink's Twitch low-latency options. |
 | Show offline channels | `true` | Offline configured channels stay in the lineup with offline guide data. Turn off to prune offline streamers during sync. |
+| Live indicator | `XMLTV <live /> tag` | Select the XMLTV tag, red-dot title prefix, both, or neither. |
+| Programme description separator | `\\n` | Supports a real newline via `\\n`, arbitrary plain text, legacy `<br />`, or an empty separator. |
+| Channel logo | `Twitch channel avatar` | Stable profile avatar by default; current game/category artwork remains optional. Programme artwork still follows the category. |
 | EPG refresh interval (minutes) | `2` | Background scheduler interval for Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV. Minimum is 1 minute. |
 | ttv.lol proxy servers | `https://eu.luminous.dev,https://eu2.luminous.dev,https://lb-eu.cdn-perfprod.com,https://lb-eu2.cdn-perfprod.com` | Comma-separated proxy playlist URLs passed to Streamlink. Empty disables proxy playlist use. |
 | Emby / Jellyfin URL | empty | Optional media-server base URL. |
@@ -165,7 +180,7 @@ stay that way.
 | Measure bandwidth | Downloads a small Cloudflare speed-test payload, saves the measured Mbps value, recalculates adaptive quality, and updates the StreamProfile and media-server OutputProfile. |
 | Test proxies | Tests configured ttv.lol proxy URLs and reports reachability, HTTP status, and latency. |
 | Refresh Emby / Jellyfin | Triggers the configured server's `Refresh Guide` task. |
-| Update ttv.lol | Checks GitHub and downloads the streamlink-ttvlol `twitch.py` file when changed. |
+| Update ttv.lol | Checks GitHub and installs or verifies the newest stable streamlink-ttvlol release, rejecting any SHA-256 mismatch. |
 | Uninstall | Deletes Twitcharr-managed Channels, Streams, StreamProfile, OutputProfile, and EPG source rows, then refreshes Emby/Jellyfin if configured. Plugin files and settings remain. |
 
 
@@ -173,9 +188,16 @@ The scheduler:
 
 - refreshes Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV according to `EPG refresh interval`
 - skips guide syncs when no Twitch input is configured
-- updates ttv.lol once per server-local day after midnight
+- checks for the newest stable ttv.lol plugin once per server-local day after midnight
 
 The scheduled ttv.lol refresh remains active.
+
+### Verified ttv.lol updates
+
+Twitcharr requests the newest stable GitHub release, selects its `twitch.py`
+asset, and requires GitHub's `sha256:` asset digest before downloading. The file
+is installed atomically only when its size, digest, basic content, and Python
+syntax all match. A failed check leaves the previously installed file untouched.
 
 ## Offline Behavior
 
@@ -194,9 +216,11 @@ Twitcharr writes guide data where Dispatcharr and TV clients expect it:
 
 - Dispatcharr `EPGData` and `ProgramData` rows
 - `<data_dir>/twitch.xmltv`
-- channel icons from Twitch category artwork when live, falling back to Twitch profile images
+- channel icons from stable Twitch profile images by default, with category artwork available as an option
 - programme icons from Twitch category artwork when available
 - programme titles with streamer, category, and viewer count for live streams
+- standards-based XMLTV `<live />` markers by default
+- configurable plain-text description separators without requiring inline HTML
 - offline programme title `⚫ Offline` with Twitch profile artwork for offline streamers
 
 Twitcharr also avoids storing image URLs longer than Dispatcharr's 500-character
@@ -235,7 +259,7 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
 This plugin is free and open-source, maintained with a lot of love in my spare time. If it brings value to your Emby setup, a small donation would mean the world to me.
 
 <p align="center">
-  <a href="https://paypal.me/eliasbruno123">
+  <a href="https://paypal.me/eliasbruno124">
     <img src="https://img.shields.io/badge/Donate%20with-PayPal-0070BA?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate with PayPal">
   </a>
 </p>

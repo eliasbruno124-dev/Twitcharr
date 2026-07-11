@@ -361,11 +361,16 @@ def trigger_guide_refresh(
             else {"status": "skipped", "message": "Image cache warmup skipped"}
         )
         logger.info("Triggered Emby/Jellyfin guide refresh on %s (task=%s)", base, task_id)
+        status = "partial" if tuner_update.get("status") == "error" else "ok"
+        tuner_message = ""
+        if tuner_update.get("status") == "error":
+            tuner_message = f" Tuner update failed: {tuner_update.get('message', 'unknown error')}."
         return {
-            "status": "ok",
+            "status": status,
             "message": (
                 f"Triggered '{target.get('Name', 'Refresh Guide')}' on {base}; "
                 f"{warmup.get('message', 'image cache warmup checked')}."
+                f"{tuner_message}"
             ),
             "task_id": task_id,
             "task_name": target.get("Name", ""),

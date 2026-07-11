@@ -45,9 +45,14 @@ DEFAULT_TTVLOL_PROXY_SERVERS = (
 DEFAULT_SETTINGS: dict[str, Any] = {
     "channel_group_name": "Twitch",
     "channel_profiles": "",
+    "channel_name_prefix": "",
+    "channel_name_suffix": "",
     "starting_channel_number": 9000,
     "data_dir": "/app/data/plugins/twitcharr",
     "include_offline": True,
+    "live_indicator_mode": "xmltv",
+    "description_separator": r"\n",
+    "channel_logo_mode": "profile",
     "epg_refresh_interval_minutes": 2,
     "ttvlol_proxy_servers": DEFAULT_TTVLOL_PROXY_SERVERS,
     "stream_quality": "adaptive",
@@ -95,6 +100,12 @@ def _text_setting(
     if fallback_on_empty and not value:
         return default
     return value
+
+
+def _raw_text_setting(settings: dict, key: str, default: str = "") -> str:
+    """Return text without trimming meaningful prefix/suffix whitespace."""
+    value = settings.get(key, default)
+    return default if value is None else str(value)
 
 
 def _bool_setting(settings: dict, key: str, default: bool = False) -> bool:
@@ -237,8 +248,8 @@ def _resolve_stream_quality(settings: dict) -> str:
             measured = float(state.get("last_bandwidth_mbps") or 0)
             if measured > 0:
                 mbps = measured
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not load the last measured bandwidth: %s", exc)
     return bandwidth.quality_chain_for_bandwidth(mbps, safety_margin_pct=margin)
 
 
@@ -266,6 +277,17 @@ def _gather_entries(settings: dict, *, client=None):
         use_live_thumbnails=False,
         cache_bust=cache_bust,
         profiles_by_login=profiles_by_login,
+        channel_name_prefix=_raw_text_setting(settings, "channel_name_prefix"),
+        channel_name_suffix=_raw_text_setting(settings, "channel_name_suffix"),
+        live_indicator_mode=_text_setting(
+            settings, "live_indicator_mode", DEFAULT_SETTINGS["live_indicator_mode"], fallback_on_empty=True
+        ),
+        description_separator=_raw_text_setting(
+            settings, "description_separator", DEFAULT_SETTINGS["description_separator"]
+        ),
+        channel_logo_mode=_text_setting(
+            settings, "channel_logo_mode", DEFAULT_SETTINGS["channel_logo_mode"], fallback_on_empty=True
+        ),
     )
     return client, logins, entries
 
@@ -328,11 +350,10 @@ def _sync_channels_from_entries(settings: dict, entries: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 def _run_update_ttvlol(settings: dict, *, force: bool = False) -> dict:
-    """Single-button ttv.lol update: checks GitHub and downloads if newer.
+    """Install or verify the newest stable ttv.lol release.
 
-    `force=True` re-downloads regardless of the cached ETag — only used by
-    callers that want to repair a corrupt local copy. The action button leaves
-    `force` off so the normal flow is "check, then download only if needed".
+    `force=True` reinstalls the newest release. Every download must match the
+    SHA-256 digest published in GitHub's release metadata and valid Python.
     """
     from . import ttvlol
 
@@ -343,12 +364,13 @@ def _run_update_ttvlol(settings: dict, *, force: bool = False) -> dict:
         "message": (
             f"ttv.lol updated to {result.release_tag or 'latest'} ({result.bytes_written} bytes)."
             if result.updated
-            else f"ttv.lol already up to date ({result.release_tag or 'latest'})."
+            else f"ttv.lol is on the newest verified release ({result.release_tag or 'latest'})."
         ),
         "updated": result.updated,
         "release_tag": result.release_tag,
         "path": result.target_path,
         "bytes": result.bytes_written,
+        "sha256": result.sha256,
         "skipped_reason": result.skipped_reason,
     }
 
@@ -407,21 +429,45 @@ def _run_sync_channels(settings: dict, *, prebuilt=None, warm_images: bool = Tru
         return {"status": "error", "message": "No matching Twitch channels found."}
     guide_result = _write_lineup_guide(settings, entries)
     result = _sync_channels_from_entries(settings, entries)
-    epg_link = epg.link_channels_to_epg(entries, _data_dir(settings))
+    initial_epg_link = epg.link_channels_to_epg(entries, _data_dir(settings))
     # Channel creation makes Dispatcharr's parse task wipe and re-parse the
     # programmes for that tvg_id; if it loses that race the channel sits
     # without guide data until the next cycle. Heal those immediately.
-    heal_result = epg.ensure_programs(entries, _data_dir(settings))
+    initial_heal_result = epg.ensure_programs(entries, _data_dir(settings))
     created_channels = (result.get("channels_created") or 0) > 0
     first_media_server_refresh: dict[str, Any] | None = None
     media_server_refresh = _trigger_media_server(settings, warm_images=warm_images and not created_channels)
-    if created_channels and media_server_refresh.get("status") == "ok":
+    if created_channels and media_server_refresh.get("status") in {"ok", "partial"}:
         # Emby/Jellyfin discovers brand-new channels on the first guide
         # refresh but often fills their programmes only on the next one.
         # trigger_guide_refresh waits for the task to go idle, so a second
         # trigger here closes that gap instead of waiting a full cycle.
         first_media_server_refresh = media_server_refresh
         media_server_refresh = _trigger_media_server(settings, ensure_tuner=False, warm_images=warm_images)
+
+    # Dispatcharr may finish an asynchronous EPG parse after the channel was
+    # created. That parse can replace the fresh EPGData row or clear its
+    # programmes, leaving a newly added channel as "Not Assigned" even though
+    # the guide was written correctly. Re-link and heal once more after the
+    # blocking media-server refresh has given those parse tasks time to settle.
+    final_epg_link = epg.link_channels_to_epg(entries, _data_dir(settings))
+    final_heal_result = epg.ensure_programs(entries, _data_dir(settings))
+    epg_link = {
+        "checked_channels": max(
+            initial_epg_link.get("checked_channels", 0),
+            final_epg_link.get("checked_channels", 0),
+        ),
+        "linked_channels": (
+            initial_epg_link.get("linked_channels", 0)
+            + final_epg_link.get("linked_channels", 0)
+        ),
+        "initial_linked_channels": initial_epg_link.get("linked_channels", 0),
+        "final_linked_channels": final_epg_link.get("linked_channels", 0),
+    }
+    programs_healed = (
+        initial_heal_result.get("programs_healed", 0)
+        + final_heal_result.get("programs_healed", 0)
+    )
     if not entries:
         result["message"] = "Nothing live right now. Offline channels pruned."
     response = {
@@ -429,7 +475,7 @@ def _run_sync_channels(settings: dict, *, prebuilt=None, warm_images: bool = Tru
         "channels_synced": len(result.get("channel_names") or []),
         "guide": guide_result,
         "epg_link": epg_link,
-        "programs_healed": heal_result.get("programs_healed", 0),
+        "programs_healed": programs_healed,
         "media_server_refresh": media_server_refresh,
         "media_server_status": media_server_refresh.get("status"),
         **result,
@@ -632,6 +678,14 @@ def _validate_settings(settings: dict) -> dict:
     if bool(media_url) != bool(media_key):
         warnings.append("Set both Emby/Jellyfin URL and API key, or leave both empty.")
 
+    indicator = _text_setting(settings, "live_indicator_mode", "xmltv", fallback_on_empty=True)
+    if indicator not in {"xmltv", "emoji", "both", "none"}:
+        errors.append("Live indicator must be one of: xmltv, emoji, both, none.")
+
+    logo_mode = _text_setting(settings, "channel_logo_mode", "profile", fallback_on_empty=True)
+    if logo_mode not in {"profile", "category"}:
+        errors.append("Channel logo must be either profile or category.")
+
     return {
         "status": "error" if errors else ("warning" if warnings else "ok"),
         "errors": errors,
@@ -786,6 +840,41 @@ _scheduler_stop = threading.Event()
 _scheduler_thread: threading.Thread | None = None
 
 
+def _stop_superseded_schedulers() -> int:
+    """Stop scheduler threads left behind by an older Twitcharr import.
+
+    Dispatcharr can keep the previous unmanaged plugin module in ``sys.modules``
+    while loading an uploaded replacement under a new private module name.  A
+    disabled v1.3.1 instance would otherwise continue using the shared settings
+    row and overwrite channels refreshed by v1.3.2.  The most recently
+    initialised Twitcharr module becomes the sole scheduler owner in this
+    process; actions remain available on every loaded instance.
+    """
+    current_module = sys.modules.get(__name__)
+    stopped = 0
+    for module_name, module in list(sys.modules.items()):
+        if module is None or module is current_module:
+            continue
+        plugin_class = getattr(module, "Plugin", None)
+        if getattr(plugin_class, "name", None) != "Twitcharr":
+            continue
+        stop_event = getattr(module, "_scheduler_stop", None)
+        thread = getattr(module, "_scheduler_thread", None)
+        if not callable(getattr(stop_event, "set", None)):
+            continue
+        is_alive = getattr(thread, "is_alive", None)
+        if not callable(is_alive) or not is_alive():
+            continue
+        stop_event.set()
+        if thread is not threading.current_thread():
+            join = getattr(thread, "join", None)
+            if callable(join):
+                join(timeout=5)
+        stopped += 1
+        logger.info("Stopped superseded Twitcharr scheduler from %s", module_name)
+    return stopped
+
+
 def _is_web_server_process() -> bool:
     """True inside Dispatcharr's uWSGI web workers or the Daphne ASGI server.
 
@@ -860,9 +949,8 @@ def _interval_minutes(settings: dict) -> int:
     return _int_setting(settings, "epg_refresh_interval_minutes", 2, min_value=1)
 
 
-# ttv.lol updates always run at server-local midnight. The previous user-facing
-# setting was removed for simplicity — there is no good reason to schedule it
-# any other way.
+# The newest stable ttv.lol release is checked and verified at server-local
+# midnight. GitHub's published asset digest is mandatory before installation.
 TTVLOL_UPDATE_MINUTE_OF_DAY = 0
 
 
@@ -904,7 +992,7 @@ def _run_scheduled_tick() -> None:
         lock = _job_lock(settings, "ttvlol_update", ttl_seconds=30 * 60)
         if lock:
             try:
-                result = _run_update_ttvlol(settings, force=True)
+                result = _run_update_ttvlol(settings, force=False)
                 state = _load_schedule_state(settings)
                 state.update({
                     "last_ttvlol_check": int(time.time()),
@@ -975,12 +1063,22 @@ def _scheduler_loop() -> None:
             logger.info("Twitcharr scheduler exiting: module %s was unloaded", own_module)
             return
         try:
+            from django.db import close_old_connections
+
+            close_old_connections()
             _run_scheduled_tick()
         except ImportError as exc:
             logger.info("Twitcharr scheduler exiting after plugin reload: %s", exc)
             return
         except Exception:
             logger.exception("Twitcharr scheduler tick failed")
+        finally:
+            try:
+                from django.db import close_old_connections
+
+                close_old_connections()
+            except Exception:
+                logger.exception("Twitcharr scheduler could not close its database connection")
         _scheduler_stop.wait(SCHEDULER_POLL_SECONDS)
     logger.info("Twitcharr self-scheduler stopped")
 
@@ -1045,7 +1143,7 @@ def _ensure_schedule_running() -> dict:
         "scheduler": scheduler_state,
         "started_now": started,
         "epg_refresh": f"every {_interval_minutes(merged)} minutes",
-        "ttvlol_update": "daily at midnight (server time)",
+        "ttvlol_update": "check newest verified release daily at midnight (server time)",
         **_delete_legacy_celery_tasks(),
     }
 
@@ -1056,7 +1154,7 @@ def _ensure_schedule_running() -> dict:
 
 class Plugin:
     name = "Twitcharr"
-    version = str(_MANIFEST.get("version") or "1.3.1")
+    version = str(_MANIFEST.get("version") or "1.3.2")
     description = (
         "Twitch Live TV for Dispatcharr with anonymous metadata, Streamlink "
         "playback, XMLTV guide data and channel sync. No Twitch sign-in required."
@@ -1070,6 +1168,7 @@ class Plugin:
 
     def __init__(self):
         try:
+            _stop_superseded_schedulers()
             _start_scheduler()
         except Exception:
             logger.exception("Could not start persisted Twitcharr scheduler")
@@ -1080,25 +1179,38 @@ class Plugin:
         params = params or {}
 
         try:
+            validation = _validate_settings(settings)
+            if validation["errors"] and action != "uninstall":
+                return {
+                    "status": "error",
+                    "message": "Plugin settings are invalid: " + " ".join(validation["errors"]),
+                    "validation": validation,
+                }
+
+            result: dict
             if action == "setup":
-                return _run_setup(settings)
-            if action == "sync_channels":
-                return _run_sync_channels(settings)
-            if action == "refresh_epg":
-                return _run_refresh_epg(settings)
-            if action == "update_ttvlol":
-                return _run_update_ttvlol(settings, force=bool(params.get("force", False)))
-            if action == "run_all":
-                return _run_all(settings)
-            if action == "refresh_media_server":
-                return _run_refresh_media_server(settings)
-            if action == "measure_bandwidth":
-                return _run_measure_bandwidth(settings)
-            if action == "test_proxies":
-                return _run_test_proxies(settings)
-            if action == "uninstall":
-                return _run_uninstall(settings)
-            return {"status": "error", "message": f"Unknown action: {action}"}
+                result = _run_setup(settings)
+            elif action == "sync_channels":
+                result = _run_sync_channels(settings)
+            elif action == "refresh_epg":
+                result = _run_refresh_epg(settings)
+            elif action == "update_ttvlol":
+                result = _run_update_ttvlol(settings, force=_bool_setting(params, "force", False))
+            elif action == "run_all":
+                result = _run_all(settings)
+            elif action == "refresh_media_server":
+                result = _run_refresh_media_server(settings)
+            elif action == "measure_bandwidth":
+                result = _run_measure_bandwidth(settings)
+            elif action == "test_proxies":
+                result = _run_test_proxies(settings)
+            elif action == "uninstall":
+                result = _run_uninstall(settings)
+            else:
+                result = {"status": "error", "message": f"Unknown action: {action}"}
+            if validation["warnings"]:
+                result["validation"] = validation
+            return result
         except Exception as e:
             plugin_logger.exception("Action %s failed", action)
             return {"status": "error", "message": str(e)}
