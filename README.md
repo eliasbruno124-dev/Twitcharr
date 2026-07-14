@@ -113,7 +113,7 @@ for example `gronkh, top:de,en:25`.
 | Per-channel name templates | empty | Optional `login = template` lines such as `handofblood = TTV \| {name}`. These replace the global prefix/suffix only for that login. |
 | Channel profiles | empty | Comma-separated Dispatcharr channel profile names applied to every Twitcharr-managed channel. `*` selects all profiles. |
 | Starting channel number | `9000` | First number used for new Twitcharr Channels. Existing Twitcharr channel numbers are kept stable when possible. |
-| Stream quality | `adaptive` | Adaptive chooses the best stream variant your bandwidth can sustain, including 60fps HD when Twitch offers no 30fps HD variant. Use **Emby safe (30fps fallback)** to force a fixed 30fps-oriented chain. |
+| Stream quality | `adaptive` | Adaptive chooses the best stream variant your bandwidth can sustain, including 60fps HD when Twitch offers no 30fps HD variant. Use **Emby safe (30fps fallback)** to force a fixed 30fps-oriented chain. Every selected variant is normalized to video-first MPEG-TS before it enters Dispatcharr, including Twitch Enhanced Broadcasting fMP4 streams. |
 | Connection bandwidth (Mbps) | `0` | `0` uses the last measured bandwidth value, or the plugin's conservative fallback. |
 | Bandwidth safety margin (%) | `50` | Extra headroom used by adaptive quality. Values are clamped to the supported range. |
 | Fastest possible startup | `true` | Uses shorter Streamlink timeouts and more aggressive HLS startup options. |
@@ -173,7 +173,7 @@ Twitcharr writes guide data where Dispatcharr and TV clients expect it:
 | No channels appear | Add valid channel names or discovery tokens, then run **Sync now**. |
 | OAuth/API-key confusion | Remove Twitch credentials from the channel field. Twitcharr does not use Twitch credentials. |
 | Offline channels do not disappear | Turn **Show offline channels** off, then run **Sync channels**. |
-| Streams do not start | Run **Update ttv.lol** and **Test proxies**. For Emby/Jellyfin, use the Twitcharr M3U with `output_format=mpegts&output_profile=<output_profile_id>`. |
+| Streams do not start | Run **Update ttv.lol** and **Test proxies**, then **Sync now** so the managed StreamProfile uses the current MPEG-TS normalizer. For Emby/Jellyfin, use the Twitcharr M3U with `output_format=mpegts&output_profile=<output_profile_id>`. |
 | Proxy playback is unreliable | Remove dead proxies, reorder the list, or clear the proxy field to stop passing proxy playlist URLs to Streamlink. |
 | Guide looks stale | Run **Refresh guide** or **Sync channels**. For Emby/Jellyfin, also run **Refresh Emby / Jellyfin**. |
 | Emby/Jellyfin does not update | Set both media-server URL and API key, then run **Refresh Emby / Jellyfin**. |
