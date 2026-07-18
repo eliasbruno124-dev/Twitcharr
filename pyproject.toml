@@ -1,23 +1,9 @@
 [project]
-name = "twitcharr-dev"
+name = "twitcharr"
 version = "1.3.2"
-description = "Development and test environment for the Twitcharr Dispatcharr plugin"
+description = "Twitch EPG and stream integration plugin for Dispatcharr"
 requires-python = ">=3.11"
 dependencies = [
     "django>=4.2",
     "requests>=2.31",
 ]
-
-[dependency-groups]
-dev = [
-    "pytest>=8.0",
-    "ruff>=0.15",
-]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
-
-[tool.ruff]
-line-length = 120
-target-version = "py311"

@@ -25,4 +25,6 @@ twitcharr.zip
 .idea/
 .DS_Store
 Thumbs.db
+tests/
+.github/workflows/
 MD/
