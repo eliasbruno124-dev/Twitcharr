@@ -193,7 +193,7 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
 
 ## Support the Developer
 
-This plugin is free and open-source, maintained with a lot of love in my spare time. If it brings value to your Emby setup, a small donation would mean the world to me.
+This plugin is free and open-source, maintained with a lot of love in my spare time. If it brings value to your Dispatcharr setup, a small donation would mean the world to me.
 
 <p align="center">
   <a href="https://paypal.me/eliasbruno124">
