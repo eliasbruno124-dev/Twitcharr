@@ -5,11 +5,12 @@ Combines:
   * a continuously refreshed XMLTV guide (twitch2tuner-style)
   * direct Channel/Stream/EPGData rows in Dispatcharr — no manual M3U/EPG setup
   * Twitch channel discovery (game/top/search) directly inside the lineup field
-  * Emby/Jellyfin guide refresh on every EPG cycle
+  * coalesced Emby/Jellyfin guide refreshes on meaningful EPG changes
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -17,6 +18,7 @@ import sys
 import threading
 import time
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +66,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "media_server_api_key": "",
     "fast_startup": True,
 }
+
+MEDIA_SERVER_REFRESH_MAX_AGE_SECONDS = 30 * 60
 
 
 def _load_manifest() -> dict:
@@ -439,7 +443,13 @@ def _run_refresh_epg(settings: dict, *, prebuilt=None) -> dict:
     }
 
 
-def _run_sync_channels(settings: dict, *, prebuilt=None, warm_images: bool = True) -> dict:
+def _run_sync_channels(
+    settings: dict,
+    *,
+    prebuilt=None,
+    warm_images: bool = True,
+    refresh_media_server: bool = True,
+) -> dict:
     from . import epg
 
     if prebuilt is None:
@@ -462,9 +472,17 @@ def _run_sync_channels(settings: dict, *, prebuilt=None, warm_images: bool = Tru
         or (result.get("channels_updated") or 0) > 0
     )
     first_media_server_refresh: dict[str, Any] | None = None
-    media_server_refresh = _trigger_media_server(
-        settings,
-        warm_images=warm_images and not changed_channels,
+    should_refresh_media_server = refresh_media_server or changed_channels
+    media_server_refresh = (
+        _trigger_media_server(
+            settings,
+            warm_images=warm_images and not changed_channels,
+        )
+        if should_refresh_media_server
+        else {
+            "status": "skipped",
+            "message": "Guide content is unchanged; media-server refresh coalesced.",
+        }
     )
 
     # Dispatcharr may finish an asynchronous EPG parse after the channel was
@@ -997,6 +1015,47 @@ def _interval_minutes(settings: dict) -> int:
     return _int_setting(settings, "epg_refresh_interval_minutes", 2, min_value=1)
 
 
+def _stable_artwork_url(value: str | None) -> str:
+    """Remove cache-busters that do not represent a guide-content change."""
+    if not value:
+        return ""
+    parsed = urlsplit(str(value))
+    query = [
+        (key, item)
+        for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.lower() not in {"twarr_ts", "cache", "cache_bust", "cb", "_"}
+    ]
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
+
+
+def _guide_semantic_fingerprint(entries: list[dict]) -> str:
+    """Hash only changes that a media-server client can meaningfully display."""
+    fields = []
+    for entry in sorted(entries, key=lambda item: str(item.get("login") or "").lower()):
+        fields.append({
+            "login": str(entry.get("login") or "").lower(),
+            "display_name": str(entry.get("display_name") or ""),
+            "channel_name": str(entry.get("channel_name") or ""),
+            "live": bool(entry.get("live")),
+            "title": str(entry.get("title") or ""),
+            "game_name": str(entry.get("game_name") or ""),
+            "channel_art": _stable_artwork_url(
+                entry.get("icon_url_stable") or entry.get("icon_url")
+            ),
+            "programme_art": _stable_artwork_url(entry.get("program_icon_url")),
+        })
+    payload = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _scheduled_media_refresh_due(state: dict, fingerprint: str, now: float) -> bool:
+    last = float(state.get("last_media_server_refresh_at") or 0)
+    return (
+        state.get("last_guide_semantic_fingerprint") != fingerprint
+        or now - last >= MEDIA_SERVER_REFRESH_MAX_AGE_SECONDS
+    )
+
+
 # The newest stable ttv.lol release is checked and verified at server-local
 # midnight. GitHub's published asset digest is mandatory before installation.
 TTVLOL_UPDATE_MINUTE_OF_DAY = 0
@@ -1075,7 +1134,16 @@ def _run_scheduled_tick() -> None:
                     _save_schedule_state(settings, state)
                 else:
                     prebuilt = _gather_entries(settings)
-                    sync_result = _run_sync_channels(settings, prebuilt=prebuilt, warm_images=False)
+                    fingerprint = _guide_semantic_fingerprint(prebuilt[2])
+                    refresh_media_server = _scheduled_media_refresh_due(
+                        state, fingerprint, now
+                    )
+                    sync_result = _run_sync_channels(
+                        settings,
+                        prebuilt=prebuilt,
+                        warm_images=False,
+                        refresh_media_server=refresh_media_server,
+                    )
                     state = _load_schedule_state(settings)
                     state.update({
                         "last_epg_refresh": int(time.time()),
@@ -1084,6 +1152,11 @@ def _run_scheduled_tick() -> None:
                         "last_epg_result": sync_result.get("guide", {}),
                         "last_media_server_refresh": sync_result.get("media_server_refresh", {}),
                     })
+                    if sync_result.get("media_server_status") in {"ok", "partial"}:
+                        state.update({
+                            "last_guide_semantic_fingerprint": fingerprint,
+                            "last_media_server_refresh_at": int(time.time()),
+                        })
                     _save_schedule_state(settings, state)
             except Exception as e:
                 logger.exception("Scheduled Twitcharr refresh failed")
