@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import os
 import shlex
-import shutil
 from urllib.parse import urlencode
 
 from django.db import transaction
@@ -41,7 +40,6 @@ LEGACY_PLACEHOLDER_TVG_ID = "twitch._placeholder_"
 MAX_DB_URL_LENGTH = 500
 MAX_STREAM_PROFILE_PARAMETERS = 500
 STREAMLINK_CONFIG_FILENAME = "twitcharr.streamlinkrc"
-STREAM_RUNNER_FILENAME = "stream_runner.py"
 
 
 # ---------------------------------------------------------------------------
@@ -50,15 +48,6 @@ STREAM_RUNNER_FILENAME = "stream_runner.py"
 
 def streamlink_config_path(data_dir: str) -> str:
     return os.path.join(data_dir, STREAMLINK_CONFIG_FILENAME)
-
-
-def stream_runner_path() -> str:
-    return os.path.join(os.path.dirname(__file__), STREAM_RUNNER_FILENAME)
-
-
-def _python_command() -> str:
-    """Return a real Python interpreter, not the hosting uWSGI executable."""
-    return shutil.which("python3") or shutil.which("python") or "python3"
 
 
 def build_streamlink_config_lines(
@@ -93,7 +82,6 @@ def build_streamlink_config_lines(
         "twitch-proxy-playlist-fallback",
         "twitch-access-token-param=playerType=site",
         "twitch-access-token-param=platform=web",
-        "http-header=User-Agent={userAgent}",
         "retry-streams=1",
         "retry-max=2",
     ]
@@ -142,22 +130,14 @@ def build_streamlink_parameters(
     *,
     config_path: str,
     quality: str,
-    runner_path: str | None = None,
 ) -> str:
-    """Return parameters for the Streamlink-to-MPEG-TS runner.
-
-    Twitch Enhanced Broadcasting can expose fMP4 HLS segments. Dispatcharr's
-    shared input buffer and output profiles are designed around MPEG-TS, and a
-    profile attached after startup can miss fMP4's one-time initialization
-    boxes. Remux before the shared buffer so every downstream reader starts
-    from a self-contained MPEG-TS stream.
-    """
+    """Return the short StreamProfile.parameters value stored in Dispatcharr."""
     parts: list[str] = [
-        runner_path or stream_runner_path(),
+        os.path.join(os.path.dirname(__file__), "streamlink_runner.py"),
         "--config", config_path,
-        "--quality", quality or "best",
         # Dispatcharr substitutes this at playback time.
         "{streamUrl}",
+        quality or "best",
     ]
     parameters = " ".join(shlex.quote(p) for p in parts)
     if len(parameters) > MAX_STREAM_PROFILE_PARAMETERS:
@@ -180,9 +160,6 @@ def get_or_create_stream_profile(
     from core.models import StreamProfile
 
     plugin_dirs = ttvlol.plugin_dir(data_dir)
-    runner_path = stream_runner_path()
-    if not os.path.isfile(runner_path):
-        raise RuntimeError(f"Twitcharr stream runner is missing: {runner_path}")
     config_path = _write_streamlink_config(
         data_dir=data_dir,
         plugin_dirs=plugin_dirs,
@@ -190,17 +167,12 @@ def get_or_create_stream_profile(
         low_latency=low_latency,
         fast_startup=fast_startup,
     )
-    parameters = build_streamlink_parameters(
-        config_path=config_path,
-        quality=quality,
-        runner_path=runner_path,
-    )
-    command = _python_command()
+    parameters = build_streamlink_parameters(config_path=config_path, quality=quality)
 
     profile, _ = StreamProfile.objects.update_or_create(
         name=PROFILE_NAME,
         defaults={
-            "command": command,
+            "command": "python3",
             "parameters": parameters,
             "is_active": True,
             "locked": False,
@@ -212,10 +184,9 @@ def get_or_create_stream_profile(
 def get_or_create_media_server_output_profile():
     """Create the Emby/Jellyfin-safe OutputProfile used by Twitcharr M3Us.
 
-    Twitch/Streamlink can expose fMP4 streams as audio first and video second.
-    Emby clients are much more reliable when the final MPEG-TS has video at
-    index 0 and AAC stereo audio at index 1, matching Dispatcharr's stable IPTV
-    output shape.
+    Keep the existing profile ID, tuner URLs and AAC stereo policy. This
+    shared profile may also be used by non-Twitch channels, so its audio
+    normalization must remain independent of the Twitch input runner.
     """
     from core.models import OutputProfile
 

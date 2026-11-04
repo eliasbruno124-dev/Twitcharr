@@ -1289,6 +1289,12 @@ class Plugin:
 
     def __init__(self):
         try:
+            from .output_guard import install
+            if install():
+                logger.info("Twitcharr output lifecycle guard enabled (pid=%s)", os.getpid())
+        except Exception:
+            logger.warning("Twitcharr output lifecycle guard unavailable")
+        try:
             _stop_superseded_schedulers()
             _start_scheduler()
         except Exception:
