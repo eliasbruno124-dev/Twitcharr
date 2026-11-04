@@ -196,7 +196,7 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
 This plugin is free and open-source, maintained with a lot of love in my spare time. If it brings value to your Dispatcharr setup, a small donation would mean the world to me.
 
 <p align="center">
-  <a href="https://paypal.me/eliasbruno124">
+  <a href="https://paypal.me/eliasbruno123">
     <img src="https://img.shields.io/badge/Donate%20with-PayPal-0070BA?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate with PayPal">
   </a>
 </p>
