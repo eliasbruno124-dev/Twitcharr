@@ -1,13 +1,49 @@
+<p align="center">
+  <img src="docs/social-preview.jpg" alt="Twitcharr – Twitch as live TV for Dispatcharr, Emby and Jellyfin" width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/eliasbruno124-dev/Twitcharr/releases/latest"><img src="https://img.shields.io/github/v/release/eliasbruno124-dev/Twitcharr?label=release&color=9146FF" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/eliasbruno124-dev/Twitcharr?color=555" alt="MIT license"></a>
+  <a href="https://github.com/Dispatcharr/Dispatcharr"><img src="https://img.shields.io/badge/plugin%20for-Dispatcharr-3BA776" alt="Plugin for Dispatcharr"></a>
+</p>
+
 # Twitcharr
 
-Twitcharr is a Twitch live-TV plugin for [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr).
-It turns Twitch channel names, Twitch URLs, and a few discovery tokens into managed
-Dispatcharr Channels, Streams, StreamProfile entries, and guide data.
+**Watch Twitch like a TV channel.** Twitcharr is a plugin for
+[Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) that turns your
+favourite Twitch streamers into regular live-TV channels – with logos, a
+programme guide that shows who is live, what they are playing and how many
+people are watching. Open your TV app in Emby, Jellyfin or any IPTV player and
+zap to Twitch like to any other channel.
+
+Under the hood it turns Twitch channel names, Twitch URLs, and a few discovery
+tokens into managed Dispatcharr Channels, Streams, StreamProfile entries, and
+guide data.
 
 No Twitch login, OAuth token, Client ID, Client Secret, or Twitch API key is used.
 Twitcharr reads public Twitch web metadata anonymously. Playback still depends on
 Streamlink inside the Dispatcharr container, and Twitch or proxy changes can break
 individual streams.
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/tv-guide.jpg" alt="Dispatcharr TV guide with Twitch channels: streamer, category, viewer count and LIVE marker" width="100%">
+</p>
+
+<table>
+<tr>
+<td width="62%"><img src="docs/screenshots/channels.jpg" alt="Twitcharr-managed channels in Dispatcharr with Twitch avatars as logos"></td>
+<td width="38%"><img src="docs/screenshots/plugin.png" alt="Twitcharr in Dispatcharr's plugin list"></td>
+</tr>
+<tr>
+<td align="center"><sub>Channels are created and kept up to date automatically</sub></td>
+<td align="center"><sub>Settings and actions in one place</sub></td>
+</tr>
+</table>
+
+<sub>Screenshots from a test instance of Dispatcharr 0.33 with Twitcharr 1.3.3 and public Twitch channels.</sub>
 
 ## Features
 
@@ -26,14 +62,25 @@ individual streams.
 
 ## Install
 
-### Import ZIP
+Twitcharr is listed in the official Dispatcharr plugin catalog, so the easiest
+way is right inside Dispatcharr:
 
-1. Download `twitcharr.zip` from the latest GitHub release.
-2. Open Dispatcharr.
-3. Go to Plugins.
-4. Import the ZIP.
-5. Enable Twitcharr.
+1. Open Dispatcharr and go to **Plugins → Find Plugins**.
+2. Search for **Twitcharr** and click **Install**.
+3. Switch Twitcharr on under **Plugins → My Plugins**.
+4. Continue with [Quick Setup](#quick-setup): add your channels and click **Sync now**.
 
+<details>
+<summary>Alternative: install the ZIP manually</summary>
+
+1. Download [`twitcharr.zip`](https://github.com/eliasbruno124-dev/Twitcharr/releases/latest/download/twitcharr.zip)
+   from the [latest release](https://github.com/eliasbruno124-dev/Twitcharr/releases/latest).
+   Do not unpack it.
+2. In Dispatcharr go to **Plugins → My Plugins** and click **Import Plugin**.
+3. Choose the ZIP and click **Upload**.
+4. Switch Twitcharr on and continue with [Quick Setup](#quick-setup).
+
+</details>
 
 ## Quick Setup
 
