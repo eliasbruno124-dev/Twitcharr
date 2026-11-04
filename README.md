@@ -15,7 +15,7 @@
 favourite Twitch streamers into regular live-TV channels – with logos, a
 programme guide that shows who is live, what they are playing and how many
 people are watching. Open your TV app in Emby, Jellyfin or any IPTV player and
-zap to Twitch like to any other channel.
+zap to Twitch like to any other channel – with Twitch ads filtered out.
 
 Under the hood it turns Twitch channel names, Twitch URLs, and a few discovery
 tokens into managed Dispatcharr Channels, Streams, StreamProfile entries, and
@@ -55,6 +55,7 @@ individual streams.
 | Channel profiles | Adds managed channels to Dispatcharr channel profiles: globally via the **Channel profiles** setting, per entry via `name(profile1, profile2)`. |
 | Dispatcharr objects | Creates and updates Twitcharr-owned Channels, Streams, a Channel Group, an EPG source, one StreamProfile, and an Emby-safe OutputProfile. |
 | Guide data | Writes Dispatcharr `EPGData` / `ProgramData` rows and `<data_dir>/twitch.xmltv`. |
+| Ad-free playback | The managed StreamProfile uses the ad-free ttv.lol playlist proxies and Streamlink's Twitch ad filter, so ads are not shown. If no proxy is reachable, Streamlink filters the ads but the picture may pause until the ad break is over. |
 | ttv.lol | Checks for and installs the newest stable streamlink-ttvlol release after SHA-256 verification. |
 | Offline channels | **Show offline channels** is on by default so Emby/Jellyfin lineups stay stable. Turn it off for a live-only lineup. |
 | Images | Uses stable Twitch channel avatars for channel logos by default and category artwork for programme images. Category logos remain selectable. |
