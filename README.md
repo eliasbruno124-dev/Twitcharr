@@ -10,21 +10,16 @@
 
 # Twitcharr
 
-**Watch Twitch like a TV channel.** Twitcharr is a plugin for
-[Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) that turns your
-favourite Twitch streamers into regular live-TV channels – with logos, a
-programme guide that shows who is live, what they are playing and how many
-people are watching. Open your TV app in Emby, Jellyfin or any IPTV player and
-zap to Twitch like to any other channel – with Twitch ads filtered out.
+**Watch Twitch like TV.** Twitcharr is a plugin for
+[Dispatcharr](https://github.com/Dispatcharr/Dispatcharr). It turns the Twitch
+streamers you choose into normal live-TV channels: their avatar becomes the
+channel logo, and the TV guide shows who is live, what they are playing and how
+many people are watching. Open Emby, Jellyfin or any IPTV app and switch to
+Twitch as you would to any other TV channel. Twitch ads are filtered out.
 
-Under the hood it turns Twitch channel names, Twitch URLs, and a few discovery
-tokens into managed Dispatcharr Channels, Streams, StreamProfile entries, and
-guide data.
-
-No Twitch login, OAuth token, Client ID, Client Secret, or Twitch API key is used.
-Twitcharr reads public Twitch web metadata anonymously. Playback still depends on
-Streamlink inside the Dispatcharr container, and Twitch or proxy changes can break
-individual streams.
+You don't need a Twitch account or API key – Twitcharr only reads public Twitch
+data. Playback runs through Streamlink inside the Dispatcharr container, so a
+change on Twitch's side can occasionally break a stream until it is fixed.
 
 ## Screenshots
 
