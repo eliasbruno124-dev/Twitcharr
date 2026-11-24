@@ -98,11 +98,34 @@ def _merge_defaults(settings: dict | None) -> dict:
         if field_id and "default" in field:
             merged[field_id] = field.get("default")
     merged.update(settings or {})
-    raw = settings or {}
-    if "use_ttvlol" not in raw and str(raw.get("ttvlol_proxy_servers", "x")).strip() == "":
-        # Before v1.3.4 an emptied proxy field was the way to turn ttv.lol off.
+    if _legacy_proxies_off(settings or {}):
         merged["use_ttvlol"] = False
     return merged
+
+
+def _legacy_proxies_off(raw: dict) -> bool:
+    # Before v1.3.4 an emptied proxy field was the way to turn ttv.lol off.
+    return "use_ttvlol" not in raw and str(raw.get("ttvlol_proxy_servers", "x")).strip() == ""
+
+
+def _migrate_legacy_settings() -> bool:
+    """Store the switch for an emptied pre-1.3.4 proxy field, once.
+
+    Dispatcharr fills missing fields with manifest defaults before actions
+    run, so only the stored settings show whether the switch was ever set.
+    Saving it makes the settings page, actions and scheduler agree.
+    """
+    try:
+        from apps.plugins.models import PluginConfig
+
+        cfg = PluginConfig.objects.filter(key=PLUGIN_KEY).first()
+        if cfg and isinstance(cfg.settings, dict) and _legacy_proxies_off(cfg.settings):
+            _save_setting("use_ttvlol", False)
+            logger.info("Twitcharr: emptied proxy field from an earlier version turned ttv.lol off")
+            return True
+    except Exception:
+        logger.debug("Twitcharr could not migrate legacy settings", exc_info=True)
+    return False
 
 
 def _text_setting(
@@ -347,6 +370,8 @@ def _load_settings() -> dict:
 
         cfg = PluginConfig.objects.filter(key=PLUGIN_KEY).first()
         if cfg and isinstance(cfg.settings, dict):
+            if _legacy_proxies_off(cfg.settings):
+                _migrate_legacy_settings()
             return _merge_defaults(cfg.settings)
     except Exception:
         logger.exception("Failed to load plugin settings from DB")
@@ -1497,6 +1522,8 @@ class Plugin:
 
     def run(self, action: str, params: dict, context: dict):
         settings = _merge_defaults((context or {}).get("settings") or {})
+        if _migrate_legacy_settings():
+            settings["use_ttvlol"] = False
         plugin_logger = (context or {}).get("logger") or logger
         params = params or {}
 
