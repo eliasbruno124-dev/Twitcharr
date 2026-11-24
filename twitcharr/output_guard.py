@@ -243,6 +243,12 @@ def install(manager_class=None, *, server_class=_AUTO_SERVER,
                 return True
             log.warning("Twitcharr output guard already has a different registry scope")
             return False
+        # Dispatcharr 0.34 replaces dead transcodes itself (_restart_transcode,
+        # slot-based reader loops) and detects stale active profile state in
+        # ensure_output_profile, which is what this guard was added for.
+        if callable(getattr(manager_class, "_restart_transcode", None)):
+            log.debug("Twitcharr output lifecycle guard not needed: Dispatcharr manages output restarts natively")
+            return False
         # Validate BOTH classes before mutating either, including an unexpected
         # pre-existing registry patch. Partial patching is unsafe at startup.
         if (not _compatible(manager_class)
