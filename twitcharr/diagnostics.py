@@ -273,6 +273,7 @@ def health_check(
     data_dir: str,
     plugin_version: str,
     scheduler_running: bool,
+    proxy_servers: str = "",
 ) -> dict[str, Any]:
     state_path = os.path.join(data_dir, ".scheduler_state.json")
     try:
@@ -327,7 +328,7 @@ def health_check(
     except Exception as exc:
         out["channel_counts_error"] = str(exc)
 
-    out["proxies"] = test_proxies(settings.get("ttvlol_proxy_servers") or "", timeout=3.0)
+    out["proxies"] = test_proxies(proxy_servers, timeout=3.0)
     proxies_alive = sum(1 for p in out["proxies"] if p.get("status") == "ok")
     out["proxies_summary"] = f"{proxies_alive}/{len(out['proxies'])} reachable"
 
