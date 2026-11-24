@@ -56,6 +56,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "live_indicator_mode": "xmltv",
     "description_separator": r"\n",
     "channel_logo_mode": "profile",
+    "programme_artwork": "live",
     "epg_refresh_interval_minutes": 2,
     "ttvlol_proxy_servers": DEFAULT_TTVLOL_PROXY_SERVERS,
     "stream_quality": "adaptive",
@@ -298,7 +299,7 @@ def _gather_entries(settings: dict, *, client=None):
         include_offline=_bool_setting(settings, "include_offline", True),
         offline_icon_url=_offline_icon_url(settings, cache_bust=cache_bust),
         offline_program_icon_url=_offline_program_icon_url(settings, cache_bust=cache_bust),
-        use_live_thumbnails=False,
+        use_live_thumbnails=_programme_artwork(settings) == "live",
         cache_bust=cache_bust,
         profiles_by_login=profiles_by_login,
         channel_name_prefix=_raw_text_setting(settings, "channel_name_prefix"),
@@ -315,6 +316,13 @@ def _gather_entries(settings: dict, *, client=None):
         ),
     )
     return client, logins, entries
+
+
+def _programme_artwork(settings: dict) -> str:
+    mode = _text_setting(
+        settings, "programme_artwork", DEFAULT_SETTINGS["programme_artwork"], fallback_on_empty=True
+    ).strip().lower()
+    return mode if mode in {"live", "category"} else DEFAULT_SETTINGS["programme_artwork"]
 
 
 def _write_epg(settings: dict, entries: list[dict]) -> dict:

@@ -153,7 +153,18 @@
         {"value": "profile", "label": "Twitch channel avatar"},
         {"value": "category", "label": "Current game/category artwork"}
       ],
-      "description": "Uses a stable Twitch avatar for the channel logo by default. Programme artwork continues to use the current game/category."
+      "description": "Uses a stable Twitch avatar for the channel logo by default. Programme artwork is set separately below."
+    },
+    {
+      "id": "programme_artwork",
+      "label": "Programme artwork",
+      "type": "select",
+      "default": "live",
+      "options": [
+        {"value": "live", "label": "Live preview of the stream"},
+        {"value": "category", "label": "Current game/category artwork"}
+      ],
+      "description": "Image shown for a live programme. The live preview is a fresh frame from the stream, updated with every guide refresh. Category artwork shows the game's box art instead."
     },
     {
       "id": "epg_refresh_interval_minutes",
