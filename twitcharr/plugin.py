@@ -1000,8 +1000,12 @@ def _job_lock(settings: dict, name: str, ttl_seconds: int = 3600) -> str:
     os.makedirs(_data_dir(settings), exist_ok=True)
     path = os.path.join(_data_dir(settings), f".{name}.lock")
     try:
-        if os.path.exists(path) and time.time() - os.path.getmtime(path) > ttl_seconds:
-            os.unlink(path)
+        try:
+            if time.time() - os.path.getmtime(path) > ttl_seconds:
+                os.unlink(path)
+        except FileNotFoundError:
+            # Released (or cleared as stale) by another process in between.
+            pass
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(f"{os.getpid()} {int(time.time())}\n")
@@ -1178,6 +1182,31 @@ def _run_scheduled_tick() -> None:
             finally:
                 _release_job_lock(lock)
 
+def _follow_plugin_reload() -> bool:
+    """Apply a plugin reload that another Dispatcharr process announced.
+
+    The scheduler lives in the Celery worker parent processes. They never run
+    plugin actions themselves, so nothing else in them looks at Dispatcharr's
+    shared reload token: after an update or reload the old module kept
+    refreshing the guide with old code until Dispatcharr restarted. Running
+    the same cached discovery the task processes use reloads this process
+    when, and only when, the token is newer. Best effort across versions.
+    """
+    try:
+        from apps.plugins.loader import PluginManager
+
+        manager = PluginManager.get()
+        get_token = getattr(manager, "_get_reload_token", None)
+        seen = getattr(manager, "_last_reload_token", None)
+        if not callable(get_token) or not isinstance(seen, (int, float)) or get_token() <= seen:
+            return False
+        manager.discover_plugins(sync_db=False, use_cache=True)
+        return True
+    except Exception:
+        logger.debug("Twitcharr could not follow a plugin reload", exc_info=True)
+        return False
+
+
 def _scheduler_loop() -> None:
     # Self-update / plugin reload swaps the module behind the running thread.
     # When that happens, every relative import in this loop raises
@@ -1185,11 +1214,14 @@ def _scheduler_loop() -> None:
     # sys.modules) and we'd spam the log forever. Bail out instead — the
     # freshly loaded module starts its own scheduler in Plugin.__init__.
     own_module = __name__
+    own = sys.modules.get(own_module)
     logger.info("Twitcharr self-scheduler started")
     while not _scheduler_stop.is_set():
-        import sys
-        if own_module not in sys.modules:
-            logger.info("Twitcharr scheduler exiting: module %s was unloaded", own_module)
+        if _follow_plugin_reload() and _scheduler_stop.is_set():
+            return
+        current = sys.modules.get(own_module)
+        if current is None or (own is not None and current is not own):
+            logger.info("Twitcharr scheduler exiting: module %s was unloaded or replaced", own_module)
             return
         try:
             from django.db import close_old_connections
