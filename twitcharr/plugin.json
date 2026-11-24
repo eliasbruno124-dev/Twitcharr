@@ -1,6 +1,6 @@
 {
   "name": "Twitcharr",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "A polished Twitch Live TV lineup for Dispatcharr. Add channels or discovery rules, then sync channels, streams and XMLTV guide data using anonymous Twitch metadata only. No OAuth, Client ID, Client Secret or Twitch sign-in required.",
   "author": "eliasbruno124",
   "maintainers": ["eliasbruno124-dev"],
@@ -153,7 +153,18 @@
         {"value": "profile", "label": "Twitch channel avatar"},
         {"value": "category", "label": "Current game/category artwork"}
       ],
-      "description": "Uses a stable Twitch avatar for the channel logo by default. Programme artwork continues to use the current game/category."
+      "description": "Uses a stable Twitch avatar for the channel logo by default. Programme artwork is set separately below."
+    },
+    {
+      "id": "programme_artwork",
+      "label": "Programme artwork",
+      "type": "select",
+      "default": "live",
+      "options": [
+        {"value": "live", "label": "Live preview of the stream"},
+        {"value": "category", "label": "Current game/category artwork"}
+      ],
+      "description": "Image shown for a live programme. The live preview is a fresh frame from the stream, updated with every guide refresh. Category artwork shows the game's box art instead."
     },
     {
       "id": "epg_refresh_interval_minutes",
@@ -163,12 +174,11 @@
       "description": "How often Twitcharr refreshes live status, guide data and icons. Minimum: 1 minute."
     },
     {
-      "id": "ttvlol_proxy_servers",
-      "label": "ttv.lol proxy servers",
-      "type": "text",
-      "default": "https://eu.luminous.dev,https://eu2.luminous.dev,https://lb-eu.cdn-perfprod.com,https://lb-eu2.cdn-perfprod.com",
-      "placeholder": "https://eu.luminous.dev,https://eu2.luminous.dev",
-      "description": "Comma-separated ttv.lol proxy playlist URLs passed to Streamlink. Leave empty to disable proxy playback."
+      "id": "use_ttvlol",
+      "label": "Ad-free playback (ttv.lol)",
+      "type": "boolean",
+      "default": true,
+      "description": "Plays Twitch through the ad-free ttv.lol proxies. Twitcharr fetches the project's server list itself, tests the servers every 10 minutes and always uses the best working ones. Off: plays directly from Twitch; Streamlink then filters ads and the picture pauses during ad breaks."
     },
     {
       "id": "media_server_url",

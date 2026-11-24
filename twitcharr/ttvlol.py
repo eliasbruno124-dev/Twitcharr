@@ -14,7 +14,9 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 import requests
@@ -38,6 +40,65 @@ class TtvlolUpdateResult:
     release_tag: str = ""
     etag: str = ""
     sha256: str = ""
+
+
+PROXY_LIST_URL = "https://raw.githubusercontent.com/2bc4/streamlink-ttvlol/master/playlist-proxies.txt"
+PROXY_LIST_FILENAME = "ttvlol-proxies.txt"
+PROXY_LIST_MAX_AGE_SECONDS = 24 * 3600
+MAX_PROXY_LIST_BYTES = 64_000
+MAX_PROJECT_PROXIES = 40
+_PROXY_ENTRY = re.compile(
+    r"^(?:https://[A-Za-z0-9.-]{1,253}(?::\d{1,5})?/?|httpproxy://[A-Za-z0-9.-]{1,253}:\d{1,5})$"
+)
+
+
+def parse_proxy_list(text: str) -> list[str]:
+    """Plain playlist proxy and HTTP proxy URLs from the project's list."""
+    proxies: list[str] = []
+    for line in (text or "").splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith("#") or not _PROXY_ENTRY.match(entry):
+            continue
+        entry = entry.rstrip("/")
+        if entry not in proxies:
+            proxies.append(entry)
+        if len(proxies) >= MAX_PROJECT_PROXIES:
+            break
+    return proxies
+
+
+def project_proxies(data_dir: str, *, now: float | None = None) -> list[str]:
+    """The streamlink-ttvlol project's public proxy list, refreshed daily.
+
+    Same project as the Streamlink plugin Twitcharr installs. The list is
+    cached in the data directory; a failed download keeps the cached copy.
+    Entries are validated (https:// or httpproxy://host:port only) and capped.
+    """
+    path = os.path.join(data_dir, PROXY_LIST_FILENAME)
+    now = time.time() if now is None else now
+    try:
+        fresh = now - os.path.getmtime(path) < PROXY_LIST_MAX_AGE_SECONDS
+    except OSError:
+        fresh = False
+    if not fresh:
+        try:
+            resp = requests.get(PROXY_LIST_URL, timeout=15, headers={"User-Agent": "Twitcharr"})
+            body = resp.content[:MAX_PROXY_LIST_BYTES + 1]
+            if resp.status_code == 200 and len(body) <= MAX_PROXY_LIST_BYTES:
+                text = body.decode("utf-8", errors="replace")
+                if parse_proxy_list(text):
+                    os.makedirs(data_dir, exist_ok=True)
+                    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        f.write(text)
+                    os.replace(tmp, path)
+        except Exception:
+            logger.debug("Could not download the ttv.lol proxy list", exc_info=True)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return parse_proxy_list(f.read(MAX_PROXY_LIST_BYTES))
+    except OSError:
+        return []
 
 
 def plugin_dir(data_dir: str) -> str:

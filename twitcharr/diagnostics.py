@@ -18,6 +18,7 @@ import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
+from urllib.parse import quote, urlencode
 
 import requests
 
@@ -57,12 +58,21 @@ def test_proxies(proxy_servers_csv: str, *, timeout: float = PROBE_TIMEOUT_S) ->
         entry: dict[str, Any] = {"url": url}
         start = time.monotonic()
         try:
-            resp = requests.get(
-                url,
-                timeout=timeout,
-                allow_redirects=False,
-                headers={"User-Agent": "Twitcharr-ProxyProbe"},
-            )
+            if url.lower().startswith("httpproxy://"):
+                proxy = "http://" + url.split("://", 1)[1].strip("/")
+                resp = requests.get(
+                    "https://gql.twitch.tv/",
+                    timeout=timeout,
+                    proxies={"http": proxy, "https": proxy},
+                    headers={"User-Agent": "Twitcharr-ProxyProbe"},
+                )
+            else:
+                resp = requests.get(
+                    url,
+                    timeout=timeout,
+                    allow_redirects=False,
+                    headers={"User-Agent": "Twitcharr-ProxyProbe"},
+                )
             entry.update({
                 "status": "ok" if resp.status_code < 500 else "error",
                 "http_code": resp.status_code,
@@ -83,6 +93,80 @@ def test_proxies(proxy_servers_csv: str, *, timeout: float = PROBE_TIMEOUT_S) ->
         0 if r.get("status") == "ok" else (1 if r.get("status") == "timeout" else 2),
         r.get("latency_ms", 99_999),
     ))
+    return results
+
+
+PROXY_RANK_BUCKET_MS = 250
+
+
+def rank_playlist_proxies(proxy_servers_csv: str, login: str, *,
+                          timeout: float = PROBE_TIMEOUT_S) -> list[dict]:
+    """Probe each ttv.lol proxy with a real playlist request and rank them.
+
+    streamlink-ttvlol uses the first proxy that returns a playlist and only
+    then falls back to Twitch itself (with ads). A proxy that answers its
+    root URL can still fail playlist requests, so the probe asks for the
+    same ``/playlist/<login>.m3u8`` the plugin requests, for a channel that
+    is live right now. Working proxies come first, fastest first; latencies
+    within one bucket keep their configured order so the list does not flap.
+    ``httpproxy://`` entries are checked with a tunnelled request to Twitch.
+    ``[channel]`` templates cannot be probed and keep their place after the
+    working proxies; failures go last.
+    """
+    urls = [u.strip() for u in (proxy_servers_csv or "").split(",") if u.strip()]
+    if not urls or not login:
+        return []
+
+    def _one(index: int, url: str) -> dict:
+        entry: dict[str, Any] = {"url": url, "index": index}
+        lowered = url.lower()
+        start = time.monotonic()
+        try:
+            if lowered.startswith("httpproxy://"):
+                # Streamlink sends its Twitch API and playlist requests
+                # through this proxy; a tunnelled request to Twitch shows
+                # whether it is usable.
+                proxy = "http://" + url.split("://", 1)[1].strip("/")
+                resp = requests.get("https://gql.twitch.tv/", timeout=timeout,
+                                    proxies={"http": proxy, "https": proxy},
+                                    headers={"User-Agent": "Twitcharr-ProxyProbe"})
+                ok = resp.status_code < 500
+            elif "[channel]" in url or not lowered.startswith(("http://", "https://")):
+                entry["status"] = "untested"
+                return entry
+            else:
+                # Same URL as streamlink-ttvlol: it quotes the whole URL with
+                # safe=":/", so the query string travels inside the path.
+                # Proxies answer the plain form with HTTP 500.
+                query = urlencode({
+                    "platform": "web", "allow_source": "true", "allow_audio_only": "true",
+                    "fast_bread": "true", "supported_codecs": "h264",
+                })
+                probe = quote(f"{url.rstrip('/')}/playlist/{login.lower()}.m3u8?{query}", safe=":/")
+                resp = requests.get(probe, timeout=timeout, headers={"User-Agent": "Twitcharr-ProxyProbe"})
+                ok = resp.status_code == 200 and resp.text.lstrip().startswith("#EXTM3U")
+            entry.update({
+                "status": "ok" if ok else "error",
+                "http_code": resp.status_code,
+                "latency_ms": int((time.monotonic() - start) * 1000),
+            })
+        except requests.exceptions.Timeout:
+            entry.update({"status": "timeout", "latency_ms": int(timeout * 1000)})
+        except Exception as exc:
+            entry.update({"status": "error", "message": str(exc)[:200]})
+        return entry
+
+    with ThreadPoolExecutor(max_workers=min(8, len(urls))) as pool:
+        results = list(pool.map(lambda item: _one(*item), enumerate(urls)))
+
+    def _key(r: dict):
+        if r.get("status") == "ok":
+            return (0, r.get("latency_ms", 0) // PROXY_RANK_BUCKET_MS, r["index"])
+        if r.get("status") == "untested":
+            return (1, 0, r["index"])
+        return (2, 0, r["index"])
+
+    results.sort(key=_key)
     return results
 
 
