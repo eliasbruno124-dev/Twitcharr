@@ -1185,13 +1185,17 @@ def _run_scheduled_tick() -> None:
 def _follow_plugin_reload() -> bool:
     """Apply a plugin reload that another Dispatcharr process announced.
 
-    The scheduler lives in the Celery worker parent processes. They never run
-    plugin actions themselves, so nothing else in them looks at Dispatcharr's
-    shared reload token: after an update or reload the old module kept
-    refreshing the guide with old code until Dispatcharr restarted. Running
-    the same cached discovery the task processes use reloads this process
-    when, and only when, the token is newer. Best effort across versions.
+    The scheduler runs in Celery worker processes that never execute plugin
+    actions. Dispatcharr's plugin-leader-election thread normally follows the
+    shared reload token there, but forked children do not inherit that thread
+    and a long-running parent was seen keeping the old module for days: the
+    guide kept being refreshed with old code until Dispatcharr restarted.
+    Without a live leader thread in this process, run the same cached
+    discovery it would, which reloads only when the token is newer. With one,
+    leave it to Dispatcharr so two reloads never run concurrently.
     """
+    if any(t.name == "plugin-leader-election" and t.is_alive() for t in threading.enumerate()):
+        return False
     try:
         from apps.plugins.loader import PluginManager
 
