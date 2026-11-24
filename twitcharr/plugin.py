@@ -886,8 +886,11 @@ def _validate_settings(settings: dict) -> dict:
         "worst",
         EMBY_SAFE_QUALITY_CHAIN,
     }
-    if quality not in valid_qualities:
-        warnings.append(f"Unknown stream quality '{quality}' will be passed to Streamlink as-is.")
+    # Streamlink accepts comma-separated fallback chains; only warn about
+    # parts that are not a known Twitch variant name.
+    unknown = [q for q in (part.strip() for part in quality.split(",")) if q and q not in valid_qualities]
+    if quality not in valid_qualities and unknown:
+        warnings.append(f"Unknown stream quality '{', '.join(unknown)}' will be passed to Streamlink as-is.")
 
     bandwidth_mbps = _float_setting(settings, "connection_bandwidth_mbps", 0)
     if bandwidth_mbps < 0:
