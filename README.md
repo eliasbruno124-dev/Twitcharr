@@ -50,7 +50,7 @@ change on Twitch's side can occasionally break a stream until it is fixed.
 | Channel profiles | Adds managed channels to Dispatcharr channel profiles: globally via the **Channel profiles** setting, per entry via `name(profile1, profile2)`. |
 | Dispatcharr objects | Creates and updates Twitcharr-owned Channels, Streams, a Channel Group, an EPG source, one StreamProfile, and an Emby-safe OutputProfile. |
 | Guide data | Writes Dispatcharr `EPGData` / `ProgramData` rows and `<data_dir>/twitch.xmltv`. |
-| Ad-free playback | The managed StreamProfile uses the ad-free ttv.lol playlist proxies and Streamlink's Twitch ad filter, so ads are not shown. If no proxy is reachable, Streamlink filters the ads and the picture pauses until the ad break is over; Twitcharr keeps the connection alive meanwhile, so Dispatcharr does not reconnect in a loop. |
+| Ad-free playback | The managed StreamProfile uses the ad-free ttv.lol proxies and Streamlink's Twitch ad filter, so ads are not shown. Twitcharr fetches the ttv.lol project's server list itself and always uses the best working servers. If no proxy is reachable, Streamlink filters the ads and the picture pauses until the ad break is over; Twitcharr keeps the connection alive meanwhile, so Dispatcharr does not reconnect in a loop. |
 | ttv.lol | Checks for and installs the newest stable streamlink-ttvlol release after SHA-256 verification. |
 | Offline channels | **Show offline channels** is on by default so Emby/Jellyfin lineups stay stable. Turn it off for a live-only lineup. |
 | Images | Uses stable Twitch channel avatars for channel logos and a live preview frame of the stream for programme images by default, refreshed with every guide refresh. Category artwork is selectable for both. |
@@ -167,7 +167,7 @@ for example `gronkh, top:de,en:25`.
 | Channel logo | `Twitch channel avatar` | Stable profile avatar by default; current game/category artwork remains optional. |
 | Programme artwork | `Live preview of the stream` | Fresh frame of the live stream, updated with every guide refresh. `Current game/category artwork` shows the game's box art instead. |
 | EPG refresh interval (minutes) | `2` | Background scheduler interval for Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV. Minimum is 1 minute. |
-| ttv.lol proxy servers | `https://eu.luminous.dev,https://eu2.luminous.dev,https://lb-eu.cdn-perfprod.com,https://lb-eu2.cdn-perfprod.com` | Comma-separated proxy playlist URLs passed to Streamlink. Empty disables proxy playlist use. |
+| Ad-free playback (ttv.lol) | `true` | Plays Twitch through the ad-free ttv.lol proxies. Twitcharr downloads the streamlink-ttvlol project's public server list once a day, tests all servers every 10 minutes against a live channel and writes the working ones best first into the Streamlink config. Dead servers are skipped and come back once they work again. HTTP proxies are only used when no playlist proxy works, because Streamlink cannot fall back to Twitch after a failing HTTP proxy. Off: plays directly from Twitch. |
 | Emby / Jellyfin URL | empty | Optional media-server base URL. |
 | Emby / Jellyfin API key | empty | API key for Emby/Jellyfin guide refresh only. This is not a Twitch key. |
 | Data directory | `/app/data/plugins/twitcharr` | Stores XMLTV, scheduler state, Streamlink config, and downloaded streamlink-ttvlol plugin. |
@@ -181,7 +181,7 @@ for example `gronkh, top:de,en:25`.
 | Sync channels | Writes guide data, creates or updates Channels/Streams, links Channels to fresh EPG rows, prunes stale Twitcharr-owned Channels/Streams, refreshes Emby/Jellyfin if configured, then repeats the EPG link/programme repair pass after refresh tasks settle. |
 | Full refresh | Runs ttv.lol update check, resolves Twitch inputs once, syncs Channels/Streams, writes guide data, and refreshes Emby/Jellyfin if configured. |
 | Measure bandwidth | Downloads a small Cloudflare speed-test payload, saves the measured Mbps value, recalculates adaptive quality, and updates the StreamProfile and media-server OutputProfile. |
-| Test proxies | Tests configured ttv.lol proxy URLs and reports reachability, HTTP status, and latency. |
+| Test proxies | Tests all ttv.lol proxies (built-in and from the project list) and reports reachability, HTTP status, latency and the order currently used. |
 | Refresh Emby / Jellyfin | Triggers the configured server's `Refresh Guide` task. |
 | Update ttv.lol | Checks GitHub and installs or verifies the newest stable streamlink-ttvlol release, rejecting any SHA-256 mismatch. |
 | Uninstall | Deletes Twitcharr-managed Channels, Streams, StreamProfile, OutputProfile, and EPG source rows, then refreshes Emby/Jellyfin if configured. Plugin files and settings remain. |
@@ -218,7 +218,7 @@ Twitcharr writes guide data where Dispatcharr and TV clients expect it:
 | OAuth/API-key confusion | Remove Twitch credentials from the channel field. Twitcharr does not use Twitch credentials. |
 | Offline channels do not disappear | Turn **Show offline channels** off, then run **Sync channels**. |
 | Streams do not start | Run **Update ttv.lol** and **Test proxies**, then **Sync now** so the managed StreamProfile uses the current MPEG-TS normalizer. For Emby/Jellyfin, use the Twitcharr M3U with `output_format=mpegts&output_profile=<output_profile_id>`. |
-| Proxy playback is unreliable | Remove dead proxies, reorder the list, or clear the proxy field to stop passing proxy playlist URLs to Streamlink. |
+| Proxy playback is unreliable | Run **Test proxies** to see which servers work. Twitcharr re-orders them every 10 minutes; turn **Ad-free playback (ttv.lol)** off to play directly from Twitch. |
 | Guide looks stale | Run **Refresh guide** or **Sync channels**. For Emby/Jellyfin, also run **Refresh Emby / Jellyfin**. |
 | Emby/Jellyfin does not update | Set both media-server URL and API key, then run **Refresh Emby / Jellyfin**. |
 | Adaptive quality is too high or too low | Run **Measure bandwidth**, set a manual bandwidth value, or adjust the safety margin. |

@@ -38,6 +38,7 @@ EMBY_SAFE_QUALITY_CHAIN = (
 )
 
 
+# Built-in starting list; the project's public list is added at runtime.
 DEFAULT_TTVLOL_PROXY_SERVERS = (
     "https://eu.luminous.dev,"
     "https://eu2.luminous.dev,"
@@ -58,7 +59,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "channel_logo_mode": "profile",
     "programme_artwork": "live",
     "epg_refresh_interval_minutes": 2,
-    "ttvlol_proxy_servers": DEFAULT_TTVLOL_PROXY_SERVERS,
+    "use_ttvlol": True,
     "stream_quality": "adaptive",
     "connection_bandwidth_mbps": 0,
     "bandwidth_safety_margin_pct": 50,
@@ -90,6 +91,10 @@ def _merge_defaults(settings: dict | None) -> dict:
         if field_id and "default" in field:
             merged[field_id] = field.get("default")
     merged.update(settings or {})
+    raw = settings or {}
+    if "use_ttvlol" not in raw and str(raw.get("ttvlol_proxy_servers", "x")).strip() == "":
+        # Before v1.3.4 an emptied proxy field was the way to turn ttv.lol off.
+        merged["use_ttvlol"] = False
     return merged
 
 
@@ -174,10 +179,144 @@ def _float_setting(settings: dict, key: str, default: float) -> float:
         return default
 
 
+def _proxies_enabled(settings: dict) -> bool:
+    return _bool_setting(settings, "use_ttvlol", True)
+
+
+def _base_proxies(settings: dict) -> list[str]:
+    """Built-in proxies plus any list saved by earlier versions' proxy field."""
+    proxies = _proxy_list(DEFAULT_TTVLOL_PROXY_SERVERS)
+    for url in _proxy_list(str(settings.get("ttvlol_proxy_servers") or "")):
+        if url not in proxies:
+            proxies.append(url)
+    return proxies
+
+
 def _proxy_servers(settings: dict) -> str:
-    # Missing value means "use defaults"; an explicitly empty field means
-    # "disable proxy", matching the settings description.
-    return _text_setting(settings, "ttvlol_proxy_servers", DEFAULT_TTVLOL_PROXY_SERVERS)
+    """Proxies used before the first measurement (empty: ttv.lol is off)."""
+    return ",".join(_base_proxies(settings)) if _proxies_enabled(settings) else ""
+
+
+PROXY_RANK_INTERVAL_SECONDS = 10 * 60
+MAX_RANKED_PROXIES = 6
+
+
+def _proxy_list(csv: str) -> list[str]:
+    return [u.strip() for u in (csv or "").split(",") if u.strip()]
+
+
+def _is_http_proxy(url: str) -> bool:
+    return url.lower().startswith("httpproxy://")
+
+
+def _proxy_rank_key(settings: dict) -> str:
+    # The measured order belongs to these inputs; changing them invalidates it.
+    return "auto|" + ",".join(_base_proxies(settings))
+
+
+def _effective_proxy_servers(settings: dict) -> str:
+    """The ttv.lol proxies Streamlink gets: the last measured order, if any.
+
+    With ttv.lol turned off Streamlink gets no proxy and plays from Twitch
+    directly. Until a measurement exists the built-in list applies.
+    """
+    if not _proxies_enabled(settings):
+        return ""
+    fallback = _proxy_servers(settings)
+    try:
+        state = _load_schedule_state(settings)
+    except Exception:
+        return fallback
+    ranked = state.get("proxy_order")
+    if state.get("proxy_rank_key") != _proxy_rank_key(settings) or not isinstance(ranked, list) or not ranked:
+        return fallback
+    return ",".join(str(url) for url in ranked)
+
+
+def _proxy_rank_due(settings: dict, state: dict, now: float) -> bool:
+    if not _proxies_enabled(settings):
+        return False
+    if state.get("proxy_rank_key") != _proxy_rank_key(settings):
+        return True
+    try:
+        last = float(state.get("last_proxy_rank") or 0)
+    except (TypeError, ValueError):
+        last = 0.0
+    return now - last >= PROXY_RANK_INTERVAL_SECONDS
+
+
+def _proxy_order(base: list[str], results: list[dict]) -> list[str]:
+    """Best-first proxy list for Streamlink from a ranking.
+
+    streamlink-ttvlol walks the list until one proxy returns a playlist and
+    then falls back to Twitch itself. Playlist proxies (https://) fail with an
+    error it catches, so dead ones only cost time. An HTTP proxy that fails
+    raises an error it does not catch: the stream start fails and the fallback
+    never runs. HTTP proxies are therefore only listed when no playlist proxy
+    works, as the one ad-free option left.
+    """
+    ok = [r["url"] for r in results if r.get("status") == "ok"]
+    playlist_ok = [u for u in ok if not _is_http_proxy(u)][:MAX_RANKED_PROXIES]
+    untested = [r["url"] for r in results if r.get("status") == "untested" and r["url"] in base]
+    if playlist_ok:
+        head = playlist_ok + untested
+    else:
+        head = [u for u in ok if _is_http_proxy(u)][:2] + untested
+    # Built-in playlist proxies that failed stay at the end: they come back on
+    # their own once they work again and cost nothing while others work.
+    tail = [u for u in base if u not in head and not _is_http_proxy(u)]
+    return head + tail
+
+
+def _candidate_proxies(settings: dict) -> list[str]:
+    from . import ttvlol
+
+    if not _proxies_enabled(settings):
+        return []
+    candidates = _base_proxies(settings)
+    for url in ttvlol.project_proxies(_data_dir(settings)):
+        if url not in candidates:
+            candidates.append(url)
+    return candidates
+
+
+def _rank_proxies(settings: dict, live_logins: list[str]) -> dict:
+    """Measure the ttv.lol proxies against a live channel, best first.
+
+    Candidates are the built-in proxies plus the streamlink-ttvlol project's
+    public list (downloaded daily). Rewrites only the Streamlink config file,
+    which is read at every stream start; running streams keep their proxy.
+    Without a live channel, or when no proxy works (network trouble), the
+    order stays as it is.
+    """
+    from . import diagnostics, streamlink_setup, ttvlol
+
+    if not live_logins:
+        return {"status": "skipped", "reason": "no live channel to probe"}
+    base = _base_proxies(settings)
+    candidates = _candidate_proxies(settings)
+    before = _effective_proxy_servers(settings)
+    results = diagnostics.rank_playlist_proxies(",".join(candidates), live_logins[0], timeout=5.0)
+    for r in results:
+        r["source"] = "built-in" if r["url"] in base else "ttv.lol list"
+    state = _load_schedule_state(settings)
+    state.update({"last_proxy_rank": int(time.time()), "last_proxy_rank_result": results})
+    if any(r.get("status") == "ok" for r in results):
+        state["proxy_order"] = _proxy_order(base, results)
+        state["proxy_rank_key"] = _proxy_rank_key(settings)
+    _save_schedule_state(settings, state)
+    after = _effective_proxy_servers(settings)
+    if after != before:
+        data_dir = _data_dir(settings)
+        streamlink_setup._write_streamlink_config(
+            data_dir=data_dir,
+            plugin_dirs=ttvlol.plugin_dir(data_dir),
+            proxy_servers=after,
+            low_latency=_bool_setting(settings, "enable_low_latency", True),
+            fast_startup=_bool_setting(settings, "fast_startup", True),
+        )
+        logger.info("Twitcharr ttv.lol proxy order: %s", after)
+    return {"status": "ok", "order": _proxy_list(after), "changed": after != before}
 
 
 def _offline_icon_url(settings: dict, *, cache_bust: int | None = None) -> str:
@@ -370,7 +509,7 @@ def _sync_channels_from_entries(settings: dict, entries: list[dict]) -> dict:
             DEFAULT_SETTINGS["starting_channel_number"],
             min_value=1,
         ),
-        proxy_servers=_proxy_servers(settings),
+        proxy_servers=_effective_proxy_servers(settings),
         quality=_resolve_stream_quality(settings),
         low_latency=_bool_setting(settings, "enable_low_latency", True),
         fast_startup=_bool_setting(settings, "fast_startup", True),
@@ -559,7 +698,7 @@ def _run_setup(settings: dict) -> dict:
     ttv_result = ttvlol.update_ttvlol(data_dir, force=False)
     profile = streamlink_setup.get_or_create_stream_profile(
         data_dir=data_dir,
-        proxy_servers=_proxy_servers(settings),
+        proxy_servers=_effective_proxy_servers(settings),
         quality=_resolve_stream_quality(settings),
         low_latency=_bool_setting(settings, "enable_low_latency", True),
         fast_startup=_bool_setting(settings, "fast_startup", True),
@@ -727,11 +866,6 @@ def _validate_settings(settings: dict) -> dict:
     if margin != _int_setting(settings, "bandwidth_safety_margin_pct", 50):
         warnings.append("Bandwidth safety margin is clamped to the supported 0-200% range.")
 
-    proxy_servers = _proxy_servers(settings)
-    for url in [u.strip() for u in proxy_servers.split(",") if u.strip()]:
-        if not url.lower().startswith(("http://", "https://")):
-            warnings.append(f"Proxy URL '{url}' should start with http:// or https://.")
-
     media_url = _text_setting(settings, "media_server_url")
     media_key = _text_setting(settings, "media_server_api_key")
     if bool(media_url) != bool(media_key):
@@ -780,7 +914,7 @@ def _run_test_proxies(settings: dict) -> dict:
     """Probe every ttv.lol proxy URL and report HTTP code + latency."""
     from . import diagnostics
 
-    csv = _proxy_servers(settings)
+    csv = ",".join(_candidate_proxies(settings))
     results = diagnostics.test_proxies(csv, timeout=5.0)
     alive = sum(1 for r in results if r.get("status") == "ok")
     total = len(results)
@@ -791,10 +925,11 @@ def _run_test_proxies(settings: dict) -> dict:
         "reachable": alive,
         "total": total,
         "proxies": results,
+        "active_order": _proxy_list(_effective_proxy_servers(settings)),
         "next": (
-            "Remove or reorder dead proxies for faster channel switching."
-            if alive < total
-            else "All proxies reachable."
+            "Twitcharr orders the proxies automatically and skips dead ones."
+            if total
+            else "ttv.lol is turned off."
         ),
     }
 
@@ -843,7 +978,7 @@ def _run_measure_bandwidth(settings: dict) -> dict:
 
         profile = streamlink_setup.get_or_create_stream_profile(
             data_dir=_data_dir(effective_settings),
-            proxy_servers=_proxy_servers(effective_settings),
+            proxy_servers=_effective_proxy_servers(effective_settings),
             quality=_resolve_stream_quality(effective_settings),
             low_latency=_bool_setting(effective_settings, "enable_low_latency", True),
             fast_startup=_bool_setting(effective_settings, "fast_startup", True),
@@ -1170,6 +1305,12 @@ def _run_scheduled_tick() -> None:
                             "last_media_server_refresh_at": int(time.time()),
                         })
                     _save_schedule_state(settings, state)
+                    if _proxy_rank_due(settings, state, time.time()):
+                        live_logins = [e.get("login") for e in prebuilt[2] if e.get("live") and e.get("login")]
+                        try:
+                            _rank_proxies(settings, live_logins)
+                        except Exception:
+                            logger.exception("Twitcharr ttv.lol proxy ranking failed")
             except Exception as e:
                 logger.exception("Scheduled Twitcharr refresh failed")
                 state = _load_schedule_state(settings)

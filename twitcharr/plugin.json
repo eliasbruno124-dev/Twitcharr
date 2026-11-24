@@ -174,12 +174,11 @@
       "description": "How often Twitcharr refreshes live status, guide data and icons. Minimum: 1 minute."
     },
     {
-      "id": "ttvlol_proxy_servers",
-      "label": "ttv.lol proxy servers",
-      "type": "text",
-      "default": "https://eu.luminous.dev,https://eu2.luminous.dev,https://lb-eu.cdn-perfprod.com,https://lb-eu2.cdn-perfprod.com",
-      "placeholder": "https://eu.luminous.dev,https://eu2.luminous.dev",
-      "description": "Comma-separated ttv.lol proxy playlist URLs passed to Streamlink. Leave empty to disable proxy playback."
+      "id": "use_ttvlol",
+      "label": "Ad-free playback (ttv.lol)",
+      "type": "boolean",
+      "default": true,
+      "description": "Plays Twitch through the ad-free ttv.lol proxies. Twitcharr fetches the project's server list itself, tests the servers every 10 minutes and always uses the best working ones. Off: plays directly from Twitch; Streamlink then filters ads and the picture pauses during ad breaks."
     },
     {
       "id": "media_server_url",
