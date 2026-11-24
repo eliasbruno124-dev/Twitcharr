@@ -53,7 +53,7 @@ change on Twitch's side can occasionally break a stream until it is fixed.
 | Ad-free playback | The managed StreamProfile uses the ad-free ttv.lol proxies and Streamlink's Twitch ad filter, so ads are not shown. Twitcharr fetches the ttv.lol project's server list itself and always uses the best working servers. If no proxy is reachable, Streamlink filters the ads and the picture pauses until the ad break is over; Twitcharr keeps the connection alive meanwhile, so Dispatcharr does not reconnect in a loop. |
 | ttv.lol | Checks for and installs the newest stable streamlink-ttvlol release after SHA-256 verification. |
 | Offline channels | **Show offline channels** is on by default so Emby/Jellyfin lineups stay stable. Turn it off for a live-only lineup. |
-| Images | Uses stable Twitch channel avatars for channel logos and a live preview frame of the stream for programme images by default, refreshed with every guide refresh. Category artwork is selectable for both. |
+| Images | Uses stable Twitch channel avatars for channel logos and the game/category box art for programme images by default. A live preview frame of the stream and category logos are selectable. |
 | Media servers | Can trigger the Emby/Jellyfin `Refresh Guide` scheduled task when URL and API key are configured. |
 
 ## Install
@@ -156,11 +156,11 @@ for example `gronkh, top:de,en:25`.
 | Per-channel name templates | empty | Optional `login = template` lines such as `handofblood = TTV \| {name}`. These replace the global prefix/suffix only for that login. |
 | Channel profiles | empty | Comma-separated Dispatcharr channel profile names applied to every Twitcharr-managed channel. `*` selects all profiles. |
 | Starting channel number | `9000` | First number used for new Twitcharr Channels. Existing Twitcharr channel numbers are kept stable when possible. |
-| Stream quality | `adaptive` | Adaptive chooses the best stream variant your bandwidth can sustain, including 60fps HD when Twitch offers no 30fps HD variant. Use **Emby safe (30fps fallback)** to force a fixed 30fps-oriented chain. Every selected variant is normalized to video-first MPEG-TS before it enters Dispatcharr, including Twitch Enhanced Broadcasting fMP4 streams. |
+| Maximum quality | `Automatic` | Automatic measures the internet connection once a day and picks the best quality it can carry, 60 fps included. `1080p`, `720p` or `480p` cap the quality, for example for a device on weak Wi-Fi; streams without that exact quality fall back to the next lower one. A quality chosen in an earlier version is converted automatically. |
 | Show offline channels | `true` | Offline configured channels stay in the lineup with offline guide data. Turn off to prune offline streamers during sync. |
 | Live indicator | `XMLTV <live /> tag` | Select the XMLTV tag, red-dot title prefix, both, or neither. |
 | Channel logo | `Twitch channel avatar` | Stable profile avatar by default; current game/category artwork remains optional. |
-| Programme artwork | `Live preview of the stream` | Fresh frame of the live stream, updated with every guide refresh. `Current game/category artwork` shows the game's box art instead. |
+| Programme artwork | `Current game/category artwork` | Box art of the game or category being streamed. `Live preview of the stream` shows a fresh frame of the stream instead, updated with every guide refresh. |
 | EPG refresh interval (minutes) | `2` | Background scheduler interval for Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV. Minimum is 1 minute. |
 | Ad-free playback (ttv.lol) | `true` | Plays Twitch through the ad-free ttv.lol proxies. Twitcharr downloads the streamlink-ttvlol project's public server list once a day, tests all servers every 10 minutes against a live channel and writes the working ones best first into the Streamlink config. Dead servers are skipped and come back once they work again. HTTP proxies are only used when no playlist proxy works, because Streamlink cannot fall back to Twitch after a failing HTTP proxy. Off: plays directly from Twitch. |
 | Emby / Jellyfin URL | empty | Optional media-server base URL. |
@@ -174,7 +174,7 @@ for example `gronkh, top:de,en:25`.
 | Refresh guide | Resolves Twitch inputs, writes XMLTV plus Dispatcharr EPG rows, opportunistically checks ttv.lol freshness, and refreshes Emby/Jellyfin if configured. |
 | Sync channels | Writes guide data, creates or updates Channels/Streams, links Channels to fresh EPG rows, prunes stale Twitcharr-owned Channels/Streams, refreshes Emby/Jellyfin if configured, then repeats the EPG link/programme repair pass after refresh tasks settle. |
 | Full refresh | Runs ttv.lol update check, resolves Twitch inputs once, syncs Channels/Streams, writes guide data, and refreshes Emby/Jellyfin if configured. |
-| Measure bandwidth | Downloads a small Cloudflare speed-test payload, saves the measured Mbps value, recalculates adaptive quality, and updates the StreamProfile and media-server OutputProfile. |
+| Measure bandwidth | Downloads a small Cloudflare speed-test payload, saves the measured Mbps value, recalculates automatic quality, and updates the StreamProfile and media-server OutputProfile. Runs by itself once a day when Maximum quality is Automatic. |
 | Test proxies | Tests all ttv.lol proxies (built-in and from the project list) and reports reachability, HTTP status, latency and the order currently used. |
 | Refresh Emby / Jellyfin | Triggers the configured server's `Refresh Guide` task. |
 | Update ttv.lol | Checks GitHub and installs or verifies the newest stable streamlink-ttvlol release, rejecting any SHA-256 mismatch. |
@@ -198,7 +198,7 @@ Twitcharr writes guide data where Dispatcharr and TV clients expect it:
 - Dispatcharr `EPGData` and `ProgramData` rows
 - `<data_dir>/twitch.xmltv`
 - channel icons from stable Twitch profile images by default, with category artwork available as an option
-- programme icons from the live stream preview by default, or Twitch category artwork as an option
+- programme icons from Twitch category artwork by default, or the live stream preview as an option
 - programme titles with streamer, category, and viewer count for live streams
 - standards-based XMLTV `<live />` markers by default
 - offline programme title `⚫ Offline` with Twitch profile artwork for offline streamers
@@ -214,7 +214,7 @@ Twitcharr writes guide data where Dispatcharr and TV clients expect it:
 | Proxy playback is unreliable | Run **Test proxies** to see which servers work. Twitcharr re-orders them every 10 minutes; turn **Ad-free playback (ttv.lol)** off to play directly from Twitch. |
 | Guide looks stale | Run **Refresh guide** or **Sync channels**. For Emby/Jellyfin, also run **Refresh Emby / Jellyfin**. |
 | Emby/Jellyfin does not update | Set both media-server URL and API key, then run **Refresh Emby / Jellyfin**. |
-| Adaptive quality is too high or too low | Run **Measure bandwidth** again, or pick a fixed quality such as **Emby safe (30fps fallback)**. |
+| Automatic quality is too high or too low | Run **Measure bandwidth** again, or set **Maximum quality** to a fixed value such as 720p. |
 
 ## Sources
 

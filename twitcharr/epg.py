@@ -249,12 +249,11 @@ def build_entries(
             game = games.get(s.game_id) if s.game_id else None
             game_name = (s.game_name or (game.name if game else "")).strip()
 
-            # Programme artwork: the live preview frame (default) shows what
-            # the stream looks like right now and is refreshed with every
-            # guide refresh. The "category" mode keeps stable box art in its
-            # native portrait ratio (~272x380) instead — forcing it into
-            # 640x360 would stretch it, and portrait tiles (Emby "Läuft
-            # gerade") would distort it a second time when cropping back.
+            # Programme artwork: stable category box art by default, in its
+            # native portrait ratio (~272x380) - forcing it into 640x360 would
+            # stretch it, and portrait tiles (Emby "Läuft gerade") would
+            # distort it a second time. The optional live preview frame shows
+            # what the stream looks like right now.
             if use_live_thumbnails:
                 program_icon_url = live_preview_url(login, cache_bust=cache_bust)
             elif game and game.box_art_url:
