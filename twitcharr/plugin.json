@@ -123,12 +123,12 @@
       "id": "programme_artwork",
       "label": "Programme artwork",
       "type": "select",
-      "default": "live",
+      "default": "category",
       "options": [
-        {"value": "live", "label": "Live preview of the stream"},
-        {"value": "category", "label": "Current game/category artwork"}
+        {"value": "category", "label": "Current game/category artwork"},
+        {"value": "live", "label": "Live preview of the stream"}
       ],
-      "description": "Image shown for a live programme. The live preview is a fresh frame from the stream, updated with every guide refresh. Category artwork shows the game's box art instead."
+      "description": "Image shown for a live programme: the box art of the game or category being streamed, or a fresh preview frame of the stream, updated with every guide refresh."
     },
     {
       "id": "epg_refresh_interval_minutes",

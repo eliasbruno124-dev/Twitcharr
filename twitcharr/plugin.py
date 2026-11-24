@@ -59,7 +59,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "live_indicator_mode": "xmltv",
     "description_separator": r"\n",
     "channel_logo_mode": "profile",
-    "programme_artwork": "live",
+    "programme_artwork": "category",
     "epg_refresh_interval_minutes": 2,
     "use_ttvlol": True,
     "stream_quality": "adaptive",
