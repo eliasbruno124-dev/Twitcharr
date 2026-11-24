@@ -82,6 +82,13 @@ def _load_manifest() -> dict:
 
 
 _MANIFEST = _load_manifest()
+try:
+    # Fingerprint of the running code, recorded with every scheduled refresh
+    # so a stale module in a long-lived worker process is easy to spot.
+    with open(__file__, "rb") as _source:
+        _CODE_ID = hashlib.sha256(_source.read()).hexdigest()[:12]
+except OSError:
+    _CODE_ID = "unknown"
 
 
 def _merge_defaults(settings: dict | None) -> dict:
@@ -1125,7 +1132,8 @@ def _load_schedule_state(settings: dict) -> dict:
 def _save_schedule_state(settings: dict, state: dict) -> None:
     path = _schedule_state_path(settings)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
+    # Several processes save this file; a shared temp name could interleave.
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f)
     os.replace(tmp, path)
@@ -1295,6 +1303,8 @@ def _run_scheduled_tick() -> None:
                     state.update({
                         "last_epg_refresh": int(time.time()),
                         "last_epg_status": "ok",
+                        "last_epg_pid": os.getpid(),
+                        "last_epg_code": _CODE_ID,
                         "last_sync_result": sync_result,
                         "last_epg_result": sync_result.get("guide", {}),
                         "last_media_server_refresh": sync_result.get("media_server_refresh", {}),
