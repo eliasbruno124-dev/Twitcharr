@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 from urllib.parse import urlencode
 
@@ -50,6 +51,21 @@ def streamlink_config_path(data_dir: str) -> str:
     return os.path.join(data_dir, STREAMLINK_CONFIG_FILENAME)
 
 
+def _streamlink_version() -> tuple[int, ...] | None:
+    try:
+        from importlib.metadata import version
+
+        return tuple(int(part) for part in re.findall(r"\d+", version("streamlink"))[:3])
+    except Exception:
+        return None
+
+
+def _needs_disable_ads_flag(streamlink_version: tuple[int, ...] | None) -> bool:
+    # Streamlink 7.5.0 always filters Twitch ads and deprecated the flag; newer
+    # releases warn on every start. Keep it for older or unknown versions.
+    return streamlink_version is None or streamlink_version < (7, 5)
+
+
 def build_streamlink_config_lines(
     *,
     plugin_dirs: str,
@@ -78,7 +94,7 @@ def build_streamlink_config_lines(
         # Dispatcharr containers usually do not have a usable browser. With
         # ttv.lol playlist proxies, Streamlink does not need client-integrity.
         "webbrowser=no",
-        "twitch-disable-ads",
+        *(["twitch-disable-ads"] if _needs_disable_ads_flag(_streamlink_version()) else []),
         "twitch-proxy-playlist-fallback",
         "twitch-access-token-param=playerType=site",
         "twitch-access-token-param=platform=web",
