@@ -69,7 +69,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "channel_logo_mode": "profile",
     "programme_artwork": "category",
     "epg_refresh_interval_minutes": 2,
-    "ad_blocking": "embed",
+    "adblock": True,
     "max_quality": "auto",
     "connection_bandwidth_mbps": 0,
     "media_server_url": "",
@@ -105,9 +105,8 @@ def _merge_defaults(settings: dict | None) -> dict:
         if field_id and "default" in field:
             merged[field_id] = field.get("default")
     merged.update(settings or {})
-    legacy_ad = _legacy_ad_blocking(settings or {})
-    if legacy_ad:
-        merged["ad_blocking"] = legacy_ad
+    if _legacy_adblock_off(settings or {}):
+        merged["adblock"] = False
     legacy_quality = _legacy_max_quality(settings or {})
     if legacy_quality:
         merged["max_quality"] = legacy_quality
@@ -133,20 +132,19 @@ def _legacy_max_quality(raw: dict) -> str:
     return "auto"
 
 
-def _legacy_ad_blocking(raw: dict) -> str:
-    """Ad blocking mode for settings saved before v1.3.5, "" if nothing to convert.
+def _legacy_adblock_off(raw: dict) -> bool:
+    """True when ad blocking was turned off with a setting of an earlier version.
 
     v1.3.4 had an on/off ttv.lol switch, earlier versions an emptied proxy
-    field to turn proxies off. Both "off" choices stay off; "on" becomes the
-    default mode, which blocks more ads than the proxies did.
+    field to turn proxies off; both "off" choices stay off.
     """
+    if "adblock" in raw:
+        return False
     if "ad_blocking" in raw:
-        return ""
+        return str(raw.get("ad_blocking")).strip().lower() == "off"
     if "use_ttvlol" in raw:
-        return "off" if str(raw.get("use_ttvlol")).strip().lower() in {"false", "0", "off", "no", ""} else ""
-    if str(raw.get("ttvlol_proxy_servers", "x")).strip() == "":
-        return "off"
-    return ""
+        return str(raw.get("use_ttvlol")).strip().lower() in {"false", "0", "off", "no", ""}
+    return str(raw.get("ttvlol_proxy_servers", "x")).strip() == ""
 
 
 def _migrate_legacy_settings() -> bool:
@@ -168,9 +166,8 @@ def _migrate_legacy_settings() -> bool:
             _save_setting("max_quality", legacy_quality)
             logger.info("Twitcharr: stream quality from an earlier version became maximum quality %s", legacy_quality)
             changed = True
-        legacy_ad = _legacy_ad_blocking(cfg.settings)
-        if legacy_ad:
-            _save_setting("ad_blocking", legacy_ad)
+        if _legacy_adblock_off(cfg.settings):
+            _save_setting("adblock", False)
             logger.info("Twitcharr: ad blocking switched off in an earlier version stays off")
             changed = True
         return changed
@@ -260,21 +257,20 @@ def _float_setting(settings: dict, key: str, default: float) -> float:
         return default
 
 
-AD_BLOCKING_MODES = {"embed", "ttvlol", "off"}
-
-
-def _ad_mode(settings: dict) -> str:
-    mode = _text_setting(settings, "ad_blocking", "embed", fallback_on_empty=True).strip().lower()
-    return mode if mode in AD_BLOCKING_MODES else "embed"
+def _adblock(settings: dict) -> bool:
+    return _bool_setting(settings, "adblock", True)
 
 
 def _proxies_enabled(settings: dict) -> bool:
-    return _ad_mode(settings) == "ttvlol"
+    # Playback starts through the ttv.lol proxies; the runner switches to the
+    # embedded player once Streamlink reports an ad anyway.
+    return _adblock(settings)
 
 
 def _player_type(settings: dict) -> str:
-    # The embed player also serves as the direct fallback behind ttv.lol.
-    return "site" if _ad_mode(settings) == "off" else "embed"
+    # Used for direct requests: the embed-player switch and ttv.lol's own
+    # fallback. Twitch plays far fewer ads for embedded players.
+    return "embed" if _adblock(settings) else "site"
 
 
 def _base_proxies(settings: dict) -> list[str]:
@@ -445,7 +441,7 @@ def _load_settings() -> dict:
 
         cfg = PluginConfig.objects.filter(key=PLUGIN_KEY).first()
         if cfg and isinstance(cfg.settings, dict):
-            if _legacy_ad_blocking(cfg.settings) or _legacy_max_quality(cfg.settings):
+            if _legacy_adblock_off(cfg.settings) or _legacy_max_quality(cfg.settings):
                 if _migrate_legacy_settings():
                     cfg.refresh_from_db()
             return _merge_defaults(cfg.settings)
@@ -1133,7 +1129,7 @@ def _run_test_proxies(settings: dict) -> dict:
         "next": (
             "Twitcharr orders the proxies automatically and skips dead ones."
             if total
-            else "ttv.lol proxies are only used with Ad blocking set to ttv.lol."
+            else "The ad blocker is turned off."
         ),
     }
 

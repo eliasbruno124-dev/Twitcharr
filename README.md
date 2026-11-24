@@ -50,7 +50,7 @@ change on Twitch's side can occasionally break a stream until it is fixed.
 | Channel profiles | Adds managed channels to Dispatcharr channel profiles: globally via the **Channel profiles** setting, per entry via `name(profile1, profile2)`. |
 | Dispatcharr objects | Creates and updates Twitcharr-owned Channels, Streams, a Channel Group, an EPG source, one StreamProfile, and an Emby-safe OutputProfile. |
 | Guide data | Writes Dispatcharr `EPGData` / `ProgramData` rows and `<data_dir>/twitch.xmltv`. |
-| Ad-free playback | Plays as an embedded Twitch player, for which Twitch plays far fewer ads, or through the ttv.lol proxies. Ads that still come through are filtered out by Streamlink; the picture pauses until the break is over and Twitcharr keeps the connection alive, also during a pre-roll before the first picture. |
+| Ad-free playback | Plays through the ttv.lol proxies and switches to an embedded Twitch player when an ad comes through anyway. Remaining ads are filtered out by Streamlink; the picture pauses until the break is over and Twitcharr keeps the connection alive, also during a pre-roll before the first picture. |
 | ttv.lol | Checks for and installs the newest stable streamlink-ttvlol release after SHA-256 verification. |
 | Offline channels | **Show offline channels** is on by default so Emby/Jellyfin lineups stay stable. Turn it off for a live-only lineup. |
 | Images | Uses stable Twitch channel avatars for channel logos and the game/category box art for programme images by default. A live preview frame of the stream and category logos are selectable. |
@@ -162,7 +162,7 @@ for example `gronkh, top:de,en:25`.
 | Channel logo | `Twitch channel avatar` | Stable profile avatar by default; current game/category artwork remains optional. |
 | Programme artwork | `Current game/category artwork` | Box art of the game or category being streamed. `Live preview of the stream` shows a fresh frame of the stream instead, updated with every guide refresh. |
 | EPG refresh interval (minutes) | `2` | Background scheduler interval for Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV. Minimum is 1 minute. |
-| Ad blocking | `Twitch embed player` | `Twitch embed player` plays as an embedded Twitch player, for which Twitch plays far fewer ads (in a test on 2026-11-24: no pre-roll in 24 starts, versus 4 of 24 through ttv.lol), at full quality. `ttv.lol proxies` plays through the ttv.lol proxies: Twitcharr downloads the project's server list once a day, tests all servers every 10 minutes and uses the working ones best first; HTTP proxies only when no playlist proxy works. `Off` plays the standard Twitch player. Ads that still come through are always filtered out by Streamlink; Twitcharr keeps the connection alive meanwhile. |
+| Ad blocker | `true` | Plays through the ad-free ttv.lol proxies: Twitcharr downloads the project's server list once a day, tests all servers every 10 minutes and uses the working ones best first (HTTP proxies only when no playlist proxy works). If Streamlink reports an ad anyway, before the first picture or mid-stream, Twitcharr switches once to a new session straight from Twitch as an embedded player, for which Twitch plays far fewer ads (in a test on 2026-11-24: no pre-roll in 24 starts, versus 4 of 24 through ttv.lol). Ads that still come through are filtered out by Streamlink; Twitcharr keeps the connection alive meanwhile. Off: plays the standard Twitch player. |
 | Emby / Jellyfin URL | empty | Optional media-server base URL. |
 | Emby / Jellyfin API key | empty | API key for Emby/Jellyfin guide refresh only. This is not a Twitch key. |
 
@@ -211,7 +211,7 @@ Twitcharr writes guide data where Dispatcharr and TV clients expect it:
 | OAuth/API-key confusion | Remove Twitch credentials from the channel field. Twitcharr does not use Twitch credentials. |
 | Offline channels do not disappear | Turn **Show offline channels** off, then run **Sync channels**. |
 | Streams do not start | Run **Update ttv.lol** and **Test proxies**, then **Sync now** so the managed StreamProfile uses the current MPEG-TS normalizer. For Emby/Jellyfin, use the Twitcharr M3U with `output_format=mpegts&output_profile=<output_profile_id>`. |
-| Ads still interrupt the stream | Ads are always filtered out, but the picture pauses meanwhile. Try the other **Ad blocking** mode; with ttv.lol, **Test proxies** shows which servers work. |
+| Ads still interrupt the stream | Ads are always filtered out, but the picture pauses meanwhile. With the ad blocker on, Twitcharr already switches to the embedded player once per playback; **Test proxies** shows which ttv.lol servers work. |
 | Guide looks stale | Run **Refresh guide** or **Sync channels**. For Emby/Jellyfin, also run **Refresh Emby / Jellyfin**. |
 | Emby/Jellyfin does not update | Set both media-server URL and API key, then run **Refresh Emby / Jellyfin**. |
 | Automatic quality is too high or too low | Run **Measure bandwidth** again, or set **Maximum quality** to a fixed value such as 720p. |

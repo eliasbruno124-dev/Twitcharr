@@ -126,16 +126,11 @@
       "description": "How often Twitcharr refreshes live status, guide data and icons. Minimum: 1 minute."
     },
     {
-      "id": "ad_blocking",
-      "label": "Ad blocking",
-      "type": "select",
-      "default": "embed",
-      "options": [
-        {"value": "embed", "label": "Twitch embed player (recommended)"},
-        {"value": "ttvlol", "label": "ttv.lol proxies"},
-        {"value": "off", "label": "Off"}
-      ],
-      "description": "Embed player: plays as an embedded Twitch player, for which Twitch shows far fewer ads, at full quality. ttv.lol: plays through the ad-free ttv.lol proxies (server list fetched and tested automatically). Ads that still come through are always filtered out; the picture pauses briefly instead."
+      "id": "adblock",
+      "label": "Ad blocker",
+      "type": "boolean",
+      "default": true,
+      "description": "Plays through the ad-free ttv.lol proxies (server list fetched and tested automatically). If an ad comes through anyway, Twitcharr switches to a new session as an embedded Twitch player, for which Twitch plays far fewer ads. Ads that still come through are filtered out; the picture pauses briefly instead."
     },
     {
       "id": "media_server_url",
