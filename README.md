@@ -156,7 +156,7 @@ for example `gronkh, top:de,en:25`.
 | Per-channel name templates | empty | Optional `login = template` lines such as `handofblood = TTV \| {name}`. These replace the global prefix/suffix only for that login. |
 | Channel profiles | empty | Comma-separated Dispatcharr channel profile names applied to every Twitcharr-managed channel. `*` selects all profiles. |
 | Starting channel number | `9000` | First number used for new Twitcharr Channels. Existing Twitcharr channel numbers are kept stable when possible. |
-| Stream quality | `adaptive` | Adaptive chooses the best stream variant your bandwidth can sustain, including 60fps HD when Twitch offers no 30fps HD variant. Use **Emby safe (30fps fallback)** to force a fixed 30fps-oriented chain. Every selected variant is normalized to video-first MPEG-TS before it enters Dispatcharr, including Twitch Enhanced Broadcasting fMP4 streams. |
+| Maximum quality | `Automatic` | Automatic measures the internet connection once a day and picks the best quality it can carry, 60 fps included. `1080p`, `720p` or `480p` cap the quality, for example for a device on weak Wi-Fi; streams without that exact quality fall back to the next lower one. A quality chosen in an earlier version is converted automatically. |
 | Show offline channels | `true` | Offline configured channels stay in the lineup with offline guide data. Turn off to prune offline streamers during sync. |
 | Live indicator | `XMLTV <live /> tag` | Select the XMLTV tag, red-dot title prefix, both, or neither. |
 | Channel logo | `Twitch channel avatar` | Stable profile avatar by default; current game/category artwork remains optional. |
@@ -174,7 +174,7 @@ for example `gronkh, top:de,en:25`.
 | Refresh guide | Resolves Twitch inputs, writes XMLTV plus Dispatcharr EPG rows, opportunistically checks ttv.lol freshness, and refreshes Emby/Jellyfin if configured. |
 | Sync channels | Writes guide data, creates or updates Channels/Streams, links Channels to fresh EPG rows, prunes stale Twitcharr-owned Channels/Streams, refreshes Emby/Jellyfin if configured, then repeats the EPG link/programme repair pass after refresh tasks settle. |
 | Full refresh | Runs ttv.lol update check, resolves Twitch inputs once, syncs Channels/Streams, writes guide data, and refreshes Emby/Jellyfin if configured. |
-| Measure bandwidth | Downloads a small Cloudflare speed-test payload, saves the measured Mbps value, recalculates adaptive quality, and updates the StreamProfile and media-server OutputProfile. |
+| Measure bandwidth | Downloads a small Cloudflare speed-test payload, saves the measured Mbps value, recalculates automatic quality, and updates the StreamProfile and media-server OutputProfile. Runs by itself once a day when Maximum quality is Automatic. |
 | Test proxies | Tests all ttv.lol proxies (built-in and from the project list) and reports reachability, HTTP status, latency and the order currently used. |
 | Refresh Emby / Jellyfin | Triggers the configured server's `Refresh Guide` task. |
 | Update ttv.lol | Checks GitHub and installs or verifies the newest stable streamlink-ttvlol release, rejecting any SHA-256 mismatch. |
@@ -214,7 +214,7 @@ Twitcharr writes guide data where Dispatcharr and TV clients expect it:
 | Proxy playback is unreliable | Run **Test proxies** to see which servers work. Twitcharr re-orders them every 10 minutes; turn **Ad-free playback (ttv.lol)** off to play directly from Twitch. |
 | Guide looks stale | Run **Refresh guide** or **Sync channels**. For Emby/Jellyfin, also run **Refresh Emby / Jellyfin**. |
 | Emby/Jellyfin does not update | Set both media-server URL and API key, then run **Refresh Emby / Jellyfin**. |
-| Adaptive quality is too high or too low | Run **Measure bandwidth** again, or pick a fixed quality such as **Emby safe (30fps fallback)**. |
+| Automatic quality is too high or too low | Run **Measure bandwidth** again, or set **Maximum quality** to a fixed value such as 720p. |
 
 ## Sources
 

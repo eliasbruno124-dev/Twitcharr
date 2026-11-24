@@ -64,29 +64,17 @@
       "description": "First channel number used for new Twitcharr channels. Existing Twitcharr channel numbers are kept stable when possible."
     },
     {
-      "id": "stream_quality",
-      "label": "Stream quality",
+      "id": "max_quality",
+      "label": "Maximum quality",
       "type": "select",
-      "default": "adaptive",
+      "default": "auto",
       "options": [
-        {"value": "adaptive", "label": "Adaptive (auto)"},
-        {"value": "1080p30,1080p,720p30,720p,480p30,480p,360p30,360p,160p30,160p", "label": "Emby safe (30fps fallback)"},
-        {"value": "best", "label": "Best"},
-        {"value": "1080p60", "label": "1080p60"},
-        {"value": "1080p30", "label": "1080p30"},
+        {"value": "auto", "label": "Automatic (best your connection allows)"},
         {"value": "1080p", "label": "1080p"},
-        {"value": "720p60", "label": "720p60"},
-        {"value": "720p30", "label": "720p30"},
         {"value": "720p", "label": "720p"},
-        {"value": "480p30", "label": "480p30"},
-        {"value": "480p", "label": "480p"},
-        {"value": "360p30", "label": "360p30"},
-        {"value": "360p", "label": "360p"},
-        {"value": "160p30", "label": "160p30"},
-        {"value": "160p", "label": "160p"},
-        {"value": "worst", "label": "Worst"}
+        {"value": "480p", "label": "480p"}
       ],
-      "description": "Adaptive chooses the best stream variant your connection can sustain, including 60fps HD when Twitch offers no 30fps HD variant. Fixed values and fallback chains are passed directly to Streamlink."
+      "description": "Automatic measures your internet connection once a day and picks the best quality it can carry, 60 fps included. A fixed maximum helps when a device on weak Wi-Fi stutters. Streams without that exact quality fall back to the next lower one."
     },
     {
       "id": "include_offline",

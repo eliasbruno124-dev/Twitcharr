@@ -33,9 +33,16 @@ GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
 DONATE_URL = "https://paypal.me/eliasbruno124"
 OFFLINE_ARTWORK_URL = f"{GITHUB_RAW_URL}/twitcharr/assets/offline.png"
-EMBY_SAFE_QUALITY_CHAIN = (
-    "1080p30,1080p,720p30,720p,480p30,480p,360p30,360p,160p30,160p"
-)
+# Fallback chains per maximum quality. 60 fps variants first: some streamers
+# only offer HD at 60 fps. Lower variants follow so a stream without the
+# exact variant still starts; "best" is the last resort for streams that only
+# offer their source quality.
+MAX_QUALITY_CHAINS = {
+    "1080p": "1080p60,1080p,1080p30,720p60,720p,720p30,480p30,480p,360p30,360p,160p30,160p,best",
+    "720p": "720p60,720p,720p30,480p30,480p,360p30,360p,160p30,160p,best",
+    "480p": "480p30,480p,360p30,360p,160p30,160p,best",
+}
+BANDWIDTH_RECHECK_SECONDS = 24 * 3600
 
 
 # Built-in starting list; the project's public list is added at runtime.
@@ -62,7 +69,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "programme_artwork": "category",
     "epg_refresh_interval_minutes": 2,
     "use_ttvlol": True,
-    "stream_quality": "adaptive",
+    "max_quality": "auto",
     "connection_bandwidth_mbps": 0,
     "media_server_url": "",
     "media_server_api_key": "",
@@ -99,7 +106,29 @@ def _merge_defaults(settings: dict | None) -> dict:
     merged.update(settings or {})
     if _legacy_proxies_off(settings or {}):
         merged["use_ttvlol"] = False
+    legacy_quality = _legacy_max_quality(settings or {})
+    if legacy_quality:
+        merged["max_quality"] = legacy_quality
     return merged
+
+
+def _legacy_max_quality(raw: dict) -> str:
+    """Maximum quality for a "Stream quality" value saved before v1.3.4."""
+    if "max_quality" in raw:
+        return ""
+    value = str(raw.get("stream_quality") or "").strip().lower()
+    if not value:
+        return ""
+    if value == "adaptive":
+        return "auto"
+    first = value.split(",", 1)[0].strip()
+    if first in {"best", "source"} or first.startswith("1080"):
+        return "1080p"
+    if first.startswith("720"):
+        return "720p"
+    if first.startswith(("480", "360", "160", "worst", "audio")):
+        return "480p"
+    return "auto"
 
 
 def _legacy_proxies_off(raw: dict) -> bool:
@@ -108,7 +137,7 @@ def _legacy_proxies_off(raw: dict) -> bool:
 
 
 def _migrate_legacy_settings() -> bool:
-    """Store the switch for an emptied pre-1.3.4 proxy field, once.
+    """Store settings that replace pre-1.3.4 fields, once.
 
     Dispatcharr fills missing fields with manifest defaults before actions
     run, so only the stored settings show whether the switch was ever set.
@@ -118,10 +147,19 @@ def _migrate_legacy_settings() -> bool:
         from apps.plugins.models import PluginConfig
 
         cfg = PluginConfig.objects.filter(key=PLUGIN_KEY).first()
-        if cfg and isinstance(cfg.settings, dict) and _legacy_proxies_off(cfg.settings):
+        if not cfg or not isinstance(cfg.settings, dict):
+            return False
+        changed = False
+        legacy_quality = _legacy_max_quality(cfg.settings)
+        if legacy_quality:
+            _save_setting("max_quality", legacy_quality)
+            logger.info("Twitcharr: stream quality from an earlier version became maximum quality %s", legacy_quality)
+            changed = True
+        if _legacy_proxies_off(cfg.settings):
             _save_setting("use_ttvlol", False)
             logger.info("Twitcharr: emptied proxy field from an earlier version turned ttv.lol off")
-            return True
+            changed = True
+        return changed
     except Exception:
         logger.debug("Twitcharr could not migrate legacy settings", exc_info=True)
     return False
@@ -363,14 +401,25 @@ def _offline_program_icon_url(settings: dict, *, cache_bust: int | None = None) 
 # ---------------------------------------------------------------------------
 
 
+def _stored_settings() -> dict:
+    try:
+        from apps.plugins.models import PluginConfig
+
+        cfg = PluginConfig.objects.filter(key=PLUGIN_KEY).first()
+        return dict(cfg.settings) if cfg and isinstance(cfg.settings, dict) else {}
+    except Exception:
+        return {}
+
+
 def _load_settings() -> dict:
     try:
         from apps.plugins.models import PluginConfig
 
         cfg = PluginConfig.objects.filter(key=PLUGIN_KEY).first()
         if cfg and isinstance(cfg.settings, dict):
-            if _legacy_proxies_off(cfg.settings):
-                _migrate_legacy_settings()
+            if _legacy_proxies_off(cfg.settings) or _legacy_max_quality(cfg.settings):
+                if _migrate_legacy_settings():
+                    cfg.refresh_from_db()
             return _merge_defaults(cfg.settings)
     except Exception:
         logger.exception("Failed to load plugin settings from DB")
@@ -420,32 +469,43 @@ def _profile_names(settings: dict) -> list[str]:
     return [p.strip() for p in raw.split(",") if p.strip()]
 
 
-def _resolve_stream_quality(settings: dict) -> str:
-    """Return the quality string passed to streamlink.
+def _max_quality(settings: dict) -> str:
+    mode = _text_setting(settings, "max_quality", "auto", fallback_on_empty=True).strip().lower()
+    return mode if mode == "auto" or mode in MAX_QUALITY_CHAINS else "auto"
 
-    When `stream_quality == "adaptive"` we build a left-to-right fallback
-    chain matched to the user's actual or configured bandwidth. Streamlink
-    then picks the highest available variant for each stream — and falls
-    back gracefully if the streamer doesn't expose that exact one.
+
+def _resolve_stream_quality(settings: dict) -> str:
+    """Return the quality chain passed to Streamlink.
+
+    "auto" picks the highest Twitch variant the measured connection can
+    carry (re-measured daily); a fixed maximum uses its fallback chain.
+    Streamlink takes the first variant of the chain the stream offers.
     """
-    quality = _text_setting(settings, "stream_quality", "adaptive", fallback_on_empty=True)
-    if quality != "adaptive":
-        return quality
+    mode = _max_quality(settings)
+    if mode != "auto":
+        return MAX_QUALITY_CHAINS[mode]
 
     from . import bandwidth
 
-    margin = BANDWIDTH_SAFETY_MARGIN_PCT
     mbps = _float_setting(settings, "connection_bandwidth_mbps", 0)
     if mbps <= 0:
-        # Use the most recent measured value if the user hasn't pinned one.
         try:
-            state = _load_schedule_state(settings)
-            measured = float(state.get("last_bandwidth_mbps") or 0)
+            measured = float(_load_schedule_state(settings).get("last_bandwidth_mbps") or 0)
             if measured > 0:
                 mbps = measured
         except Exception as exc:
             logger.debug("Could not load the last measured bandwidth: %s", exc)
-    return bandwidth.quality_chain_for_bandwidth(mbps, safety_margin_pct=margin)
+    return bandwidth.quality_chain_for_bandwidth(mbps, safety_margin_pct=BANDWIDTH_SAFETY_MARGIN_PCT)
+
+
+def _bandwidth_check_due(settings: dict, state: dict, now: float) -> bool:
+    if _max_quality(settings) != "auto":
+        return False
+    try:
+        last = float(state.get("last_bandwidth_at") or 0)
+    except (TypeError, ValueError):
+        last = 0.0
+    return now - last >= BANDWIDTH_RECHECK_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -875,23 +935,6 @@ def _validate_settings(settings: dict) -> dict:
     if raw_start < 1:
         errors.append("Starting channel number must be 1 or higher.")
 
-    quality = _text_setting(settings, "stream_quality", "adaptive", fallback_on_empty=True)
-    valid_qualities = {
-        "adaptive", "best",
-        "1080p60", "1080p30", "1080p",
-        "720p60", "720p30", "720p",
-        "480p30", "480p",
-        "360p30", "360p",
-        "160p30", "160p",
-        "worst",
-        EMBY_SAFE_QUALITY_CHAIN,
-    }
-    # Streamlink accepts comma-separated fallback chains; only warn about
-    # parts that are not a known Twitch variant name.
-    unknown = [q for q in (part.strip() for part in quality.split(",")) if q and q not in valid_qualities]
-    if quality not in valid_qualities and unknown:
-        warnings.append(f"Unknown stream quality '{', '.join(unknown)}' will be passed to Streamlink as-is.")
-
     bandwidth_mbps = _float_setting(settings, "connection_bandwidth_mbps", 0)
     if bandwidth_mbps < 0:
         errors.append("Connection bandwidth must be 0 or higher.")
@@ -1038,7 +1081,7 @@ def _run_measure_bandwidth(settings: dict) -> dict:
         "saved_setting": saved_setting,
         "save_error": save_error,
         **profile_update,
-        "active_now": _text_setting(settings, "stream_quality", "adaptive", fallback_on_empty=True) == "adaptive",
+        "active_now": _max_quality(settings) == "auto",
         "next": (
             "Saved to 'Connection bandwidth' and StreamProfile updated."
             if saved_setting and profile_update.get("stream_profile_updated")
@@ -1356,6 +1399,24 @@ def _run_scheduled_tick() -> None:
             finally:
                 _release_job_lock(lock)
 
+    if _bandwidth_check_due(settings, state, time.time()):
+        # Automatic quality: re-measure the connection once a day and update
+        # the StreamProfile; running streams keep their quality.
+        lock = _job_lock(settings, "bandwidth", ttl_seconds=10 * 60)
+        if lock:
+            try:
+                result = _run_measure_bandwidth(settings)
+                if result.get("status") != "ok":
+                    # Retry tomorrow rather than every tick.
+                    state = _load_schedule_state(settings)
+                    state["last_bandwidth_at"] = int(time.time())
+                    _save_schedule_state(settings, state)
+            except Exception:
+                logger.exception("Scheduled bandwidth check failed")
+            finally:
+                _release_job_lock(lock)
+
+
 def _follow_plugin_reload() -> bool:
     """Apply a plugin reload that another Dispatcharr process announced.
 
@@ -1521,7 +1582,7 @@ class Plugin:
     def run(self, action: str, params: dict, context: dict):
         settings = _merge_defaults((context or {}).get("settings") or {})
         if _migrate_legacy_settings():
-            settings["use_ttvlol"] = False
+            settings = _merge_defaults(_stored_settings() or (context or {}).get("settings") or {})
         plugin_logger = (context or {}).get("logger") or logger
         params = params or {}
 
