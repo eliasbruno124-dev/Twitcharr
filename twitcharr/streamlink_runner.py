@@ -52,6 +52,14 @@ KEEPALIVE_AFTER_SECONDS = 4.0
 KEEPALIVE_INTERVAL_SECONDS = 1.0
 KEEPALIVE_MAX_SECONDS = 300.0
 KEEPALIVE_PACKETS = 700
+# Before the first real byte a pre-roll ad (15-30 s, also seen through ttv.lol
+# proxies) keeps the pipe silent; Dispatcharr gives a new stream 15 s to send
+# data and then reconnects, which plays the next pre-roll. Until the stream
+# starts, a thin trickle proves the source is alive without filling
+# Dispatcharr's buffer, so clients still start with real video.
+PREROLL_AFTER_SECONDS = 2.0
+PREROLL_MAX_SECONDS = 90.0
+PREROLL_PACKETS = 7
 EXIT_READER_GONE = 141  # 128 + SIGPIPE, as if ffmpeg had written to a closed pipe
 
 
@@ -67,9 +75,11 @@ def _pump(src_fd: int, out_fd: int, source: subprocess.Popen, mux: subprocess.Po
           stopped: threading.Event, reader_gone: threading.Event, clock=time.monotonic) -> None:
     """Copy the muxer's MPEG-TS to stdout and bridge silent gaps with null packets."""
     written = 0
+    started = False
     last_data = clock()
     last_filler = 0.0
     filler = TS_NULL_PACKET * KEEPALIVE_PACKETS
+    trickle = TS_NULL_PACKET * PREROLL_PACKETS
     try:
         while not stopped.is_set():
             ready, _, _ = select.select([src_fd], [], [], 0.25)
@@ -80,13 +90,19 @@ def _pump(src_fd: int, out_fd: int, source: subprocess.Popen, mux: subprocess.Po
                     break
                 _write_all(out_fd, chunk)
                 written += len(chunk)
+                started = True
                 last_data = now
                 continue
             silent = now - last_data
-            if (written and written % TS_PACKET_SIZE == 0
-                    and source.poll() is None and mux.poll() is None
-                    and KEEPALIVE_AFTER_SECONDS <= silent <= KEEPALIVE_MAX_SECONDS
-                    and now - last_filler >= KEEPALIVE_INTERVAL_SECONDS):
+            if now - last_filler < KEEPALIVE_INTERVAL_SECONDS or written % TS_PACKET_SIZE:
+                continue
+            if source.poll() is not None or mux.poll() is not None:
+                continue
+            if not started and PREROLL_AFTER_SECONDS <= silent <= PREROLL_MAX_SECONDS:
+                _write_all(out_fd, trickle)
+                written += len(trickle)
+                last_filler = now
+            elif started and KEEPALIVE_AFTER_SECONDS <= silent <= KEEPALIVE_MAX_SECONDS:
                 _write_all(out_fd, filler)
                 written += len(filler)
                 last_filler = now
