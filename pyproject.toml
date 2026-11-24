@@ -1,6 +1,6 @@
 [project]
 name = "twitcharr"
-version = "1.3.4"
+version = "1.3.5"
 description = "Twitch EPG and stream integration plugin for Dispatcharr"
 requires-python = ">=3.11"
 dependencies = [
