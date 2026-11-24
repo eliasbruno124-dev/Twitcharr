@@ -127,7 +127,7 @@ def _load_state(data_dir: str) -> dict:
 def _save_state(data_dir: str, state: dict) -> None:
     p = _state_file(data_dir)
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    tmp = p + ".tmp"
+    tmp = f"{p}.{os.getpid()}.{threading.get_ident()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f)
     os.replace(tmp, p)

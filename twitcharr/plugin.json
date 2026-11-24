@@ -126,11 +126,16 @@
       "description": "How often Twitcharr refreshes live status, guide data and icons. Minimum: 1 minute."
     },
     {
-      "id": "use_ttvlol",
-      "label": "Ad-free playback (ttv.lol)",
-      "type": "boolean",
-      "default": true,
-      "description": "Plays Twitch through the ad-free ttv.lol proxies. Twitcharr fetches the project's server list itself, tests the servers every 10 minutes and always uses the best working ones. Off: plays directly from Twitch; Streamlink then filters ads and the picture pauses during ad breaks."
+      "id": "ad_blocking",
+      "label": "Ad blocking",
+      "type": "select",
+      "default": "embed",
+      "options": [
+        {"value": "embed", "label": "Twitch embed player (recommended)"},
+        {"value": "ttvlol", "label": "ttv.lol proxies"},
+        {"value": "off", "label": "Off"}
+      ],
+      "description": "Embed player: plays as an embedded Twitch player, for which Twitch shows far fewer ads, at full quality. ttv.lol: plays through the ad-free ttv.lol proxies (server list fetched and tested automatically). Ads that still come through are always filtered out; the picture pauses briefly instead."
     },
     {
       "id": "media_server_url",

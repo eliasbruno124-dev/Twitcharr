@@ -146,6 +146,9 @@ class TwitchClient:
         self._streams: dict[str, TwitchStream] = {}
         self._games: dict[str, TwitchGame] = {}
         self._fetched_logins: set[str] = set()
+        # Logins Twitch did not answer for in this cycle (GraphQL error or a
+        # truncated batch). Their channels must not be pruned as "not found".
+        self.lookup_failed: set[str] = set()
 
     def _headers(self) -> dict:
         return {
@@ -159,12 +162,20 @@ class TwitchClient:
         single = isinstance(payload, dict)
         body = [payload] if single else payload
         for attempt in range(3):
-            resp = self._session.post(
-                GQL_URL,
-                headers=self._headers(),
-                json=body,
-                timeout=DEFAULT_TIMEOUT,
-            )
+            try:
+                resp = self._session.post(
+                    GQL_URL,
+                    headers=self._headers(),
+                    json=body,
+                    timeout=DEFAULT_TIMEOUT,
+                )
+            except requests.RequestException as exc:
+                # Timeouts and DNS hiccups are usually gone a second later.
+                if attempt < 2:
+                    logger.info("Twitch GraphQL request failed (%s), retrying", type(exc).__name__)
+                    time.sleep(1.0 * (attempt + 1))
+                    continue
+                raise
             if resp.status_code == 429:
                 wait = 2.0 * (attempt + 1)
                 logger.warning("Twitch GraphQL rate-limit hit, sleeping %.1fs", wait)
@@ -199,11 +210,14 @@ class TwitchClient:
                 for login in batch
             ]
             responses = self._post_gql(payload)
+            if len(responses) < len(batch):
+                self.lookup_failed.update(batch[len(responses):])
             for login, item in zip(batch, responses):
                 self._fetched_logins.add(login)
                 errors = item.get("errors") or []
                 if errors:
                     logger.warning("Twitch GraphQL warning for %s: %s", login, errors[:1])
+                    self.lookup_failed.add(login)
                     continue
                 user = ((item.get("data") or {}).get("user") or None)
                 if not user:
@@ -267,6 +281,8 @@ class TwitchClient:
             })
         except Exception:
             logger.exception("Twitch game-streams discovery failed for %r", name)
+            # A failed discovery must not look like "these channels are gone".
+            self.lookup_failed.add(f"discovery:game:{name}")
             return []
         edges = (((data or [{}])[0].get("data") or {}).get("game") or {}).get("streams") or {}
         out: list[str] = []
@@ -291,6 +307,8 @@ class TwitchClient:
             })
         except Exception:
             logger.exception("Twitch top-streams discovery failed (lang=%r)", languages)
+            # A failed discovery must not look like "these channels are gone".
+            self.lookup_failed.add("discovery:top")
             return []
         edges = (((data or [{}])[0].get("data") or {}).get("streams") or {}).get("edges") or []
         out: list[str] = []
@@ -312,6 +330,8 @@ class TwitchClient:
             })
         except Exception:
             logger.exception("Twitch channel search failed for %r", query)
+            # A failed discovery must not look like "these channels are gone".
+            self.lookup_failed.add(f"discovery:search:{query}")
             return []
         channels = (((data or [{}])[0].get("data") or {}).get("searchFor") or {}).get("channels") or {}
         out: list[str] = []
