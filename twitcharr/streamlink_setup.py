@@ -71,12 +71,15 @@ def build_streamlink_config_lines(
     plugin_dirs: str,
     proxy_servers: str,
     low_latency: bool,
-    fast_startup: bool = True,
+    fast_startup: bool = False,
 ) -> list[str]:
     """Return the long-lived Streamlink options written to the config file.
 
-    `fast_startup=True` shaves the perceptual latency between channel-switch
-    and first frame by being aggressive about retries and HLS playlist reloads.
+    Twitcharr always writes the stable profile (``fast_startup=False``,
+    ``low_latency=False``): measured on 2026-11-24, it delivers the first
+    megabyte in ~1.7 s versus ~6.5 s for the aggressive live-edge-1 profile,
+    because it starts with three finished segments instead of waiting for new
+    ones, and it rides out short stalls. The parameters remain for callers.
     """
     base_http_timeout = "5" if fast_startup else "10"
     base_segment_timeout = "4" if fast_startup else "6"
@@ -171,7 +174,7 @@ def get_or_create_stream_profile(
     proxy_servers: str,
     quality: str,
     low_latency: bool,
-    fast_startup: bool = True,
+    fast_startup: bool = False,
 ):
     from core.models import StreamProfile
 
@@ -459,7 +462,7 @@ def sync_channels(
     low_latency: bool,
     offline_icon_url: str = "",
     offline_program_icon_url: str = "",
-    fast_startup: bool = True,
+    fast_startup: bool = False,
     profile_names: list[str] | None = None,
 ) -> dict:
     """Create / update Channel + Stream rows for every entry.

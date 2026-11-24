@@ -45,6 +45,8 @@ DEFAULT_TTVLOL_PROXY_SERVERS = (
     "https://lb-eu.cdn-perfprod.com,"
     "https://lb-eu2.cdn-perfprod.com"
 )
+# Headroom above Twitch's advertised bitrate for adaptive quality.
+BANDWIDTH_SAFETY_MARGIN_PCT = 50
 DEFAULT_SETTINGS: dict[str, Any] = {
     "channel_group_name": "Twitch",
     "channel_profiles": "",
@@ -62,11 +64,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "use_ttvlol": True,
     "stream_quality": "adaptive",
     "connection_bandwidth_mbps": 0,
-    "bandwidth_safety_margin_pct": 50,
-    "enable_low_latency": True,
     "media_server_url": "",
     "media_server_api_key": "",
-    "fast_startup": True,
 }
 
 MEDIA_SERVER_REFRESH_MAX_AGE_SECONDS = 30 * 60
@@ -342,8 +341,8 @@ def _rank_proxies(settings: dict, live_logins: list[str]) -> dict:
             data_dir=data_dir,
             plugin_dirs=ttvlol.plugin_dir(data_dir),
             proxy_servers=after,
-            low_latency=_bool_setting(settings, "enable_low_latency", True),
-            fast_startup=_bool_setting(settings, "fast_startup", True),
+            low_latency=False,
+            fast_startup=False,
         )
         logger.info("Twitcharr ttv.lol proxy order: %s", after)
     return {"status": "ok", "order": _proxy_list(after), "changed": after != before}
@@ -435,7 +434,7 @@ def _resolve_stream_quality(settings: dict) -> str:
 
     from . import bandwidth
 
-    margin = _int_setting(settings, "bandwidth_safety_margin_pct", 50, min_value=0, max_value=200)
+    margin = BANDWIDTH_SAFETY_MARGIN_PCT
     mbps = _float_setting(settings, "connection_bandwidth_mbps", 0)
     if mbps <= 0:
         # Use the most recent measured value if the user hasn't pinned one.
@@ -543,8 +542,8 @@ def _sync_channels_from_entries(settings: dict, entries: list[dict]) -> dict:
         ),
         proxy_servers=_effective_proxy_servers(settings),
         quality=_resolve_stream_quality(settings),
-        low_latency=_bool_setting(settings, "enable_low_latency", True),
-        fast_startup=_bool_setting(settings, "fast_startup", True),
+        low_latency=False,
+        fast_startup=False,
         offline_icon_url=_offline_icon_url(settings),
         offline_program_icon_url=_offline_program_icon_url(settings),
         profile_names=_profile_names(settings),
@@ -732,8 +731,8 @@ def _run_setup(settings: dict) -> dict:
         data_dir=data_dir,
         proxy_servers=_effective_proxy_servers(settings),
         quality=_resolve_stream_quality(settings),
-        low_latency=_bool_setting(settings, "enable_low_latency", True),
-        fast_startup=_bool_setting(settings, "fast_startup", True),
+        low_latency=False,
+        fast_startup=False,
     )
     output_profile = streamlink_setup.get_or_create_media_server_output_profile()
 
@@ -887,16 +886,15 @@ def _validate_settings(settings: dict) -> dict:
         "worst",
         EMBY_SAFE_QUALITY_CHAIN,
     }
-    if quality not in valid_qualities:
-        warnings.append(f"Unknown stream quality '{quality}' will be passed to Streamlink as-is.")
+    # Streamlink accepts comma-separated fallback chains; only warn about
+    # parts that are not a known Twitch variant name.
+    unknown = [q for q in (part.strip() for part in quality.split(",")) if q and q not in valid_qualities]
+    if quality not in valid_qualities and unknown:
+        warnings.append(f"Unknown stream quality '{', '.join(unknown)}' will be passed to Streamlink as-is.")
 
     bandwidth_mbps = _float_setting(settings, "connection_bandwidth_mbps", 0)
     if bandwidth_mbps < 0:
         errors.append("Connection bandwidth must be 0 or higher.")
-
-    margin = _int_setting(settings, "bandwidth_safety_margin_pct", 50, min_value=0, max_value=200)
-    if margin != _int_setting(settings, "bandwidth_safety_margin_pct", 50):
-        warnings.append("Bandwidth safety margin is clamped to the supported 0-200% range.")
 
     media_url = _text_setting(settings, "media_server_url")
     media_key = _text_setting(settings, "media_server_api_key")
@@ -1012,8 +1010,8 @@ def _run_measure_bandwidth(settings: dict) -> dict:
             data_dir=_data_dir(effective_settings),
             proxy_servers=_effective_proxy_servers(effective_settings),
             quality=_resolve_stream_quality(effective_settings),
-            low_latency=_bool_setting(effective_settings, "enable_low_latency", True),
-            fast_startup=_bool_setting(effective_settings, "fast_startup", True),
+            low_latency=False,
+            fast_startup=False,
         )
         output_profile = streamlink_setup.get_or_create_media_server_output_profile()
         profile_update = {
@@ -1025,7 +1023,7 @@ def _run_measure_bandwidth(settings: dict) -> dict:
         logger.exception("Could not update StreamProfile after bandwidth probe")
         profile_update = {"stream_profile_updated": False, "stream_profile_error": str(exc)}
 
-    margin = _int_setting(settings, "bandwidth_safety_margin_pct", 50, min_value=0, max_value=200)
+    margin = BANDWIDTH_SAFETY_MARGIN_PCT
     description = bandwidth.describe_chain_for(result.mbps, safety_margin_pct=margin)
 
     return {
