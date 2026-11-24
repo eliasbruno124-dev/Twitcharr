@@ -157,20 +157,14 @@ for example `gronkh, top:de,en:25`.
 | Channel profiles | empty | Comma-separated Dispatcharr channel profile names applied to every Twitcharr-managed channel. `*` selects all profiles. |
 | Starting channel number | `9000` | First number used for new Twitcharr Channels. Existing Twitcharr channel numbers are kept stable when possible. |
 | Stream quality | `adaptive` | Adaptive chooses the best stream variant your bandwidth can sustain, including 60fps HD when Twitch offers no 30fps HD variant. Use **Emby safe (30fps fallback)** to force a fixed 30fps-oriented chain. Every selected variant is normalized to video-first MPEG-TS before it enters Dispatcharr, including Twitch Enhanced Broadcasting fMP4 streams. |
-| Connection bandwidth (Mbps) | `0` | `0` uses the last measured bandwidth value, or the plugin's conservative fallback. |
-| Bandwidth safety margin (%) | `50` | Extra headroom used by adaptive quality. Values are clamped to the supported range. |
-| Fastest possible startup | `true` | Uses shorter Streamlink timeouts and more aggressive HLS startup options. |
-| Low-latency mode | `true` | Enables Streamlink's Twitch low-latency options. |
 | Show offline channels | `true` | Offline configured channels stay in the lineup with offline guide data. Turn off to prune offline streamers during sync. |
 | Live indicator | `XMLTV <live /> tag` | Select the XMLTV tag, red-dot title prefix, both, or neither. |
-| Programme description separator | `\\n` | Supports a real newline via `\\n`, arbitrary plain text, legacy `<br />`, or an empty separator. |
 | Channel logo | `Twitch channel avatar` | Stable profile avatar by default; current game/category artwork remains optional. |
 | Programme artwork | `Live preview of the stream` | Fresh frame of the live stream, updated with every guide refresh. `Current game/category artwork` shows the game's box art instead. |
 | EPG refresh interval (minutes) | `2` | Background scheduler interval for Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV. Minimum is 1 minute. |
 | Ad-free playback (ttv.lol) | `true` | Plays Twitch through the ad-free ttv.lol proxies. Twitcharr downloads the streamlink-ttvlol project's public server list once a day, tests all servers every 10 minutes against a live channel and writes the working ones best first into the Streamlink config. Dead servers are skipped and come back once they work again. HTTP proxies are only used when no playlist proxy works, because Streamlink cannot fall back to Twitch after a failing HTTP proxy. Off: plays directly from Twitch. |
 | Emby / Jellyfin URL | empty | Optional media-server base URL. |
 | Emby / Jellyfin API key | empty | API key for Emby/Jellyfin guide refresh only. This is not a Twitch key. |
-| Data directory | `/app/data/plugins/twitcharr` | Stores XMLTV, scheduler state, Streamlink config, and downloaded streamlink-ttvlol plugin. |
 
 ## Actions
 
@@ -207,7 +201,6 @@ Twitcharr writes guide data where Dispatcharr and TV clients expect it:
 - programme icons from the live stream preview by default, or Twitch category artwork as an option
 - programme titles with streamer, category, and viewer count for live streams
 - standards-based XMLTV `<live />` markers by default
-- configurable plain-text description separators without requiring inline HTML
 - offline programme title `⚫ Offline` with Twitch profile artwork for offline streamers
 
 ## Troubleshooting
@@ -221,7 +214,7 @@ Twitcharr writes guide data where Dispatcharr and TV clients expect it:
 | Proxy playback is unreliable | Run **Test proxies** to see which servers work. Twitcharr re-orders them every 10 minutes; turn **Ad-free playback (ttv.lol)** off to play directly from Twitch. |
 | Guide looks stale | Run **Refresh guide** or **Sync channels**. For Emby/Jellyfin, also run **Refresh Emby / Jellyfin**. |
 | Emby/Jellyfin does not update | Set both media-server URL and API key, then run **Refresh Emby / Jellyfin**. |
-| Adaptive quality is too high or too low | Run **Measure bandwidth**, set a manual bandwidth value, or adjust the safety margin. |
+| Adaptive quality is too high or too low | Run **Measure bandwidth** again, or pick a fixed quality such as **Emby safe (30fps fallback)**. |
 
 ## Sources
 

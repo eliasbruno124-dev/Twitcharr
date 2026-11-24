@@ -89,34 +89,6 @@
       "description": "Adaptive chooses the best stream variant your connection can sustain, including 60fps HD when Twitch offers no 30fps HD variant. Fixed values and fallback chains are passed directly to Streamlink."
     },
     {
-      "id": "connection_bandwidth_mbps",
-      "label": "Connection bandwidth (Mbps)",
-      "type": "number",
-      "default": 0,
-      "description": "Used by adaptive quality. Set to 0 to use the last measured value or a conservative fallback."
-    },
-    {
-      "id": "bandwidth_safety_margin_pct",
-      "label": "Bandwidth safety margin (%)",
-      "type": "number",
-      "default": 50,
-      "description": "Extra headroom above Twitch's advertised bitrate. Higher is safer; lower can allow sharper quality."
-    },
-    {
-      "id": "fast_startup",
-      "label": "Fastest possible startup",
-      "type": "boolean",
-      "default": true,
-      "description": "Uses more aggressive Streamlink startup settings for faster channel switching."
-    },
-    {
-      "id": "enable_low_latency",
-      "label": "Low-latency mode",
-      "type": "boolean",
-      "default": true,
-      "description": "Enables Streamlink's Twitch low-latency options."
-    },
-    {
       "id": "include_offline",
       "label": "Show offline channels",
       "type": "boolean",
@@ -135,14 +107,6 @@
         {"value": "none", "label": "No live indicator"}
       ],
       "description": "Controls whether live programmes use the XMLTV <live /> element, the red dot title prefix, both, or neither."
-    },
-    {
-      "id": "description_separator",
-      "label": "Programme description separator",
-      "type": "string",
-      "default": "\\n",
-      "placeholder": "\\n",
-      "description": "Text inserted between description lines. Use \\n for a real newline, a space or dash for plain text, <br /> for legacy HTML, or leave empty to join without a separator."
     },
     {
       "id": "channel_logo_mode",
@@ -196,13 +160,6 @@
       "default": "",
       "placeholder": "abcdef0123456789...",
       "description": "Required when an Emby or Jellyfin URL is set. This is your media-server API key, not a Twitch token."
-    },
-    {
-      "id": "data_dir",
-      "label": "Data directory",
-      "type": "text",
-      "default": "/app/data/plugins/twitcharr",
-      "description": "Folder used for twitch.xmltv, scheduler state and the cached ttv.lol Streamlink plugin."
     }
   ],
   "actions": [
