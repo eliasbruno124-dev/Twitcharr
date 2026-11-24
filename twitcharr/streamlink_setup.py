@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import shlex
+import threading
 from urllib.parse import urlencode
 
 from django.db import transaction
@@ -72,6 +73,7 @@ def build_streamlink_config_lines(
     proxy_servers: str,
     low_latency: bool,
     fast_startup: bool = False,
+    player_type: str = "site",
 ) -> list[str]:
     """Return the long-lived Streamlink options written to the config file.
 
@@ -99,7 +101,10 @@ def build_streamlink_config_lines(
         "webbrowser=no",
         *(["twitch-disable-ads"] if _needs_disable_ads_flag(_streamlink_version()) else []),
         "twitch-proxy-playlist-fallback",
-        "twitch-access-token-param=playerType=site",
+        # Twitch plays far fewer pre-roll ads for embedded players (measured
+        # 2026-11-24: 0 of 24 starts with "embed", 3 of 9 with "site", 4 of 24
+        # through ttv.lol proxies) while offering the same qualities.
+        f"twitch-access-token-param=playerType={player_type}",
         "twitch-access-token-param=platform=web",
         "retry-streams=1",
         "retry-max=2",
@@ -128,6 +133,7 @@ def _write_streamlink_config(
     proxy_servers: str,
     low_latency: bool,
     fast_startup: bool,
+    player_type: str = "site",
 ) -> str:
     os.makedirs(data_dir, exist_ok=True)
     path = streamlink_config_path(data_dir)
@@ -136,11 +142,18 @@ def _write_streamlink_config(
         proxy_servers=proxy_servers,
         low_latency=low_latency,
         fast_startup=fast_startup,
+        player_type=player_type,
     )
-    tmp = path + ".tmp"
+    content = "\n".join(lines) + "\n"
+    try:
+        with open(path, encoding="utf-8") as f:
+            if f.read() == content:
+                return path  # unchanged: no rewrite on every scheduler tick
+    except OSError:
+        pass
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-        f.write("\n")
+        f.write(content)
     os.replace(tmp, path)
     return path
 
@@ -175,6 +188,7 @@ def get_or_create_stream_profile(
     quality: str,
     low_latency: bool,
     fast_startup: bool = False,
+    player_type: str = "site",
 ):
     from core.models import StreamProfile
 
@@ -185,18 +199,15 @@ def get_or_create_stream_profile(
         proxy_servers=proxy_servers,
         low_latency=low_latency,
         fast_startup=fast_startup,
+        player_type=player_type,
     )
     parameters = build_streamlink_parameters(config_path=config_path, quality=quality)
 
-    profile, _ = StreamProfile.objects.update_or_create(
-        name=PROFILE_NAME,
-        defaults={
-            "command": "python3",
-            "parameters": parameters,
-            "is_active": True,
-            "locked": False,
-        },
-    )
+    wanted = {"command": "python3", "parameters": parameters, "is_active": True, "locked": False}
+    profile = StreamProfile.objects.filter(name=PROFILE_NAME).first()
+    if profile is not None and all(getattr(profile, field) == value for field, value in wanted.items()):
+        return profile  # unchanged: no database write on every scheduler tick
+    profile, _ = StreamProfile.objects.update_or_create(name=PROFILE_NAME, defaults=wanted)
     return profile
 
 
@@ -463,7 +474,9 @@ def sync_channels(
     offline_icon_url: str = "",
     offline_program_icon_url: str = "",
     fast_startup: bool = False,
+    player_type: str = "site",
     profile_names: list[str] | None = None,
+    prune: bool = True,
 ) -> dict:
     """Create / update Channel + Stream rows for every entry.
 
@@ -486,6 +499,7 @@ def sync_channels(
         quality=quality,
         low_latency=low_latency,
         fast_startup=fast_startup,
+        player_type=player_type,
     )
     output_profile = get_or_create_media_server_output_profile()
     group = _channel_group(group_name)
@@ -499,7 +513,8 @@ def sync_channels(
     synced_tvg_ids: set[str] = {channel_tvg_id(e["login"]) for e in real_entries}
     legacy_placeholder_channels, legacy_placeholder_streams = _delete_legacy_placeholder()
     previously_managed_logo_ids = _managed_logo_ids()
-    pruned_channels, pruned_streams = _prune_unmanaged(synced_tvg_ids)
+    # Without a complete Twitch answer, missing entries are not "removed".
+    pruned_channels, pruned_streams = _prune_unmanaged(synced_tvg_ids) if prune else (0, 0)
     pruned_channels += legacy_placeholder_channels
     pruned_streams += legacy_placeholder_streams
 

@@ -10,6 +10,7 @@ Combines:
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
@@ -68,14 +69,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "channel_logo_mode": "profile",
     "programme_artwork": "category",
     "epg_refresh_interval_minutes": 2,
-    "use_ttvlol": True,
+    "ad_blocking": "embed",
     "max_quality": "auto",
     "connection_bandwidth_mbps": 0,
     "media_server_url": "",
     "media_server_api_key": "",
 }
 
-MEDIA_SERVER_REFRESH_MAX_AGE_SECONDS = 30 * 60
+MEDIA_SERVER_REFRESH_MAX_AGE_SECONDS = 15 * 60
 
 
 def _load_manifest() -> dict:
@@ -104,8 +105,9 @@ def _merge_defaults(settings: dict | None) -> dict:
         if field_id and "default" in field:
             merged[field_id] = field.get("default")
     merged.update(settings or {})
-    if _legacy_proxies_off(settings or {}):
-        merged["use_ttvlol"] = False
+    legacy_ad = _legacy_ad_blocking(settings or {})
+    if legacy_ad:
+        merged["ad_blocking"] = legacy_ad
     legacy_quality = _legacy_max_quality(settings or {})
     if legacy_quality:
         merged["max_quality"] = legacy_quality
@@ -131,9 +133,20 @@ def _legacy_max_quality(raw: dict) -> str:
     return "auto"
 
 
-def _legacy_proxies_off(raw: dict) -> bool:
-    # Before v1.3.4 an emptied proxy field was the way to turn ttv.lol off.
-    return "use_ttvlol" not in raw and str(raw.get("ttvlol_proxy_servers", "x")).strip() == ""
+def _legacy_ad_blocking(raw: dict) -> str:
+    """Ad blocking mode for settings saved before v1.3.5, "" if nothing to convert.
+
+    v1.3.4 had an on/off ttv.lol switch, earlier versions an emptied proxy
+    field to turn proxies off. Both "off" choices stay off; "on" becomes the
+    default mode, which blocks more ads than the proxies did.
+    """
+    if "ad_blocking" in raw:
+        return ""
+    if "use_ttvlol" in raw:
+        return "off" if str(raw.get("use_ttvlol")).strip().lower() in {"false", "0", "off", "no", ""} else ""
+    if str(raw.get("ttvlol_proxy_servers", "x")).strip() == "":
+        return "off"
+    return ""
 
 
 def _migrate_legacy_settings() -> bool:
@@ -155,9 +168,10 @@ def _migrate_legacy_settings() -> bool:
             _save_setting("max_quality", legacy_quality)
             logger.info("Twitcharr: stream quality from an earlier version became maximum quality %s", legacy_quality)
             changed = True
-        if _legacy_proxies_off(cfg.settings):
-            _save_setting("use_ttvlol", False)
-            logger.info("Twitcharr: emptied proxy field from an earlier version turned ttv.lol off")
+        legacy_ad = _legacy_ad_blocking(cfg.settings)
+        if legacy_ad:
+            _save_setting("ad_blocking", legacy_ad)
+            logger.info("Twitcharr: ad blocking switched off in an earlier version stays off")
             changed = True
         return changed
     except Exception:
@@ -246,8 +260,21 @@ def _float_setting(settings: dict, key: str, default: float) -> float:
         return default
 
 
+AD_BLOCKING_MODES = {"embed", "ttvlol", "off"}
+
+
+def _ad_mode(settings: dict) -> str:
+    mode = _text_setting(settings, "ad_blocking", "embed", fallback_on_empty=True).strip().lower()
+    return mode if mode in AD_BLOCKING_MODES else "embed"
+
+
 def _proxies_enabled(settings: dict) -> bool:
-    return _bool_setting(settings, "use_ttvlol", True)
+    return _ad_mode(settings) == "ttvlol"
+
+
+def _player_type(settings: dict) -> str:
+    # The embed player also serves as the direct fallback behind ttv.lol.
+    return "site" if _ad_mode(settings) == "off" else "embed"
 
 
 def _base_proxies(settings: dict) -> list[str]:
@@ -381,6 +408,7 @@ def _rank_proxies(settings: dict, live_logins: list[str]) -> dict:
             proxy_servers=after,
             low_latency=False,
             fast_startup=False,
+            player_type=_player_type(settings),
         )
         logger.info("Twitcharr ttv.lol proxy order: %s", after)
     return {"status": "ok", "order": _proxy_list(after), "changed": after != before}
@@ -417,7 +445,7 @@ def _load_settings() -> dict:
 
         cfg = PluginConfig.objects.filter(key=PLUGIN_KEY).first()
         if cfg and isinstance(cfg.settings, dict):
-            if _legacy_proxies_off(cfg.settings) or _legacy_max_quality(cfg.settings):
+            if _legacy_ad_blocking(cfg.settings) or _legacy_max_quality(cfg.settings):
                 if _migrate_legacy_settings():
                     cfg.refresh_from_db()
             return _merge_defaults(cfg.settings)
@@ -546,7 +574,11 @@ def _gather_entries(settings: dict, *, client=None):
         return client, [], []
     # Cache-bust image URLs per refresh cycle so Emby/Jellyfin do not keep
     # showing stale channel/category/offline artwork after guide refreshes.
-    cache_bust = int(time.time())
+    # Changing image URLs make Emby/Jellyfin download every image again. Box
+    # art and avatars have their own URL per image, so a daily value is enough
+    # to pick up replaced images; the live preview frame changes constantly.
+    now = int(time.time())
+    cache_bust = now if _programme_artwork(settings) == "live" else now - now % 86400
     entries = epg.build_entries(
         client,
         logins,
@@ -579,12 +611,12 @@ def _programme_artwork(settings: dict) -> str:
     return mode if mode in {"live", "category"} else DEFAULT_SETTINGS["programme_artwork"]
 
 
-def _write_epg(settings: dict, entries: list[dict]) -> dict:
+def _write_epg(settings: dict, entries: list[dict], *, prune: bool = True) -> dict:
     from . import epg
 
     data_dir = _data_dir(settings)
     channels, programmes = epg.write_xmltv(entries, epg.xmltv_path(data_dir))
-    db_result = epg.upsert_db(entries, data_dir)
+    db_result = epg.upsert_db(entries, data_dir, prune=prune)
     output_cache = epg.invalidate_dispatcharr_output_cache()
     return {
         "status": "ok",
@@ -602,11 +634,19 @@ def _lineup_epg_entries(settings: dict, entries: list[dict]) -> list[dict]:
     return list(entries)
 
 
-def _write_lineup_guide(settings: dict, entries: list[dict]) -> dict:
-    return _write_epg(settings, _lineup_epg_entries(settings, entries))
+def _write_lineup_guide(settings: dict, entries: list[dict], *, prune: bool = True) -> dict:
+    return _write_epg(settings, _lineup_epg_entries(settings, entries), prune=prune)
 
 
-def _sync_channels_from_entries(settings: dict, entries: list[dict]) -> dict:
+def _lookup_complete(client) -> bool:
+    """False when Twitch did not answer for some logins in this cycle."""
+    failed = getattr(client, "lookup_failed", None)
+    if failed:
+        logger.warning("Twitch did not answer for %s; keeping their channels this cycle", ", ".join(sorted(failed)))
+    return not failed
+
+
+def _sync_channels_from_entries(settings: dict, entries: list[dict], *, prune: bool = True) -> dict:
     from . import streamlink_setup
 
     return streamlink_setup.sync_channels(
@@ -628,9 +668,11 @@ def _sync_channels_from_entries(settings: dict, entries: list[dict]) -> dict:
         quality=_resolve_stream_quality(settings),
         low_latency=False,
         fast_startup=False,
+        player_type=_player_type(settings),
         offline_icon_url=_offline_icon_url(settings),
         offline_program_icon_url=_offline_program_icon_url(settings),
         profile_names=_profile_names(settings),
+        prune=prune,
     )
 
 
@@ -678,7 +720,7 @@ def _run_refresh_epg(settings: dict, *, prebuilt=None) -> dict:
     if not entries and not getattr(client, "_users", {}):
         return {"status": "error", "message": "No matching Twitch channels found."}
 
-    write_result = _write_lineup_guide(settings, entries)
+    write_result = _write_lineup_guide(settings, entries, prune=_lookup_complete(client))
 
     # Opportunistic ttv.lol freshness check (cheap when not due).
     data_dir = _data_dir(settings)
@@ -722,8 +764,9 @@ def _run_sync_channels(
         return {"status": "error", "message": "No Twitch channels configured."}
     if not entries and not getattr(client, "_users", {}):
         return {"status": "error", "message": "No matching Twitch channels found."}
-    guide_result = _write_lineup_guide(settings, entries)
-    result = _sync_channels_from_entries(settings, entries)
+    prune = _lookup_complete(client)
+    guide_result = _write_lineup_guide(settings, entries, prune=prune)
+    result = _sync_channels_from_entries(settings, entries, prune=prune)
     initial_epg_link = epg.link_channels_to_epg(entries, _data_dir(settings))
     # Channel creation makes Dispatcharr's parse task wipe and re-parse the
     # programmes for that tvg_id; if it loses that race the channel sits
@@ -817,6 +860,7 @@ def _run_setup(settings: dict) -> dict:
         quality=_resolve_stream_quality(settings),
         low_latency=False,
         fast_startup=False,
+        player_type=_player_type(settings),
     )
     output_profile = streamlink_setup.get_or_create_media_server_output_profile()
 
@@ -918,8 +962,71 @@ def _trigger_media_server(
         return {"status": "error", "message": str(exc)}
 
 
+MEDIA_LOGO_RECHECK_SECONDS = 30 * 60
+
+
+def _current_channel_logos() -> dict[str, str]:
+    from apps.channels.models import Channel
+
+    channels = (
+        Channel.objects.filter(streams__custom_properties__owner="twitcharr")
+        .select_related("logo")
+        .distinct()
+    )
+    return {c.name: c.logo.url for c in channels if c.logo_id and c.logo and c.logo.url}
+
+
+def _sync_media_logos(settings: dict, *, force: bool = False) -> dict:
+    """Keep the Emby/Jellyfin channel logos equal to Dispatcharr's.
+
+    Uploads only when a logo changed, plus a full check every 30 minutes
+    (media-server channel items can be recreated). After a failure the next
+    attempt waits 30 minutes instead of retrying on every scheduler tick.
+    """
+    from . import media_server
+
+    url = _text_setting(settings, "media_server_url")
+    key = _text_setting(settings, "media_server_api_key")
+    if not url or not key:
+        return {"status": "skipped", "message": "Emby/Jellyfin URL or API key not configured"}
+    logos = _current_channel_logos()
+    state = _load_schedule_state(settings)
+    previous = state.get("media_logos") or {}
+    # Channels the media server could not match or whose logo failed: they
+    # wait for the 30-minute check instead of triggering a full run per tick.
+    pending = state.get("media_logos_pending") or {}
+    now = time.time()
+
+    def settled(name: str, logo: str) -> bool:
+        done = previous.get(name)
+        return (isinstance(done, dict) and done.get("url") == logo) or pending.get(name) == logo
+
+    unchanged = all(settled(name, logo) for name, logo in logos.items())
+    checked = float(state.get("media_logos_checked") or 0)
+    if not force and unchanged and now - checked < MEDIA_LOGO_RECHECK_SECONDS:
+        return {"status": "unchanged", "message": "Channel logos are up to date"}
+    result = media_server.sync_channel_logos(base_url=url, api_key=key, logos=logos, uploaded=previous)
+    state = _load_schedule_state(settings)
+    state["media_logos"] = result.pop("uploaded", previous)
+    state["media_logos_pending"] = {
+        name: logos[name] for name in (result.get("failed") or []) + (result.get("skipped") or []) if name in logos
+    }
+    if result.get("status") == "error" and not result.get("changed"):
+        # Media server unreachable or refusing: every channel waits for the next check.
+        state["media_logos_pending"] = dict(logos)
+    state["media_logos_checked"] = int(now)
+    state.pop("media_logos_retry_after", None)
+    _save_schedule_state(settings, state)
+    return result
+
+
 def _run_refresh_media_server(settings: dict) -> dict:
     trigger = _trigger_media_server(settings)
+    try:
+        trigger["logos"] = _sync_media_logos(settings, force=True)
+    except Exception as exc:
+        logger.exception("Twitcharr could not update media-server channel logos")
+        trigger["logos"] = {"status": "error", "message": type(exc).__name__}
     return {
         "status": trigger.get("status", "ok"),
         "message": trigger.get("message", "Media server checked."),
@@ -1026,7 +1133,7 @@ def _run_test_proxies(settings: dict) -> dict:
         "next": (
             "Twitcharr orders the proxies automatically and skips dead ones."
             if total
-            else "ttv.lol is turned off."
+            else "ttv.lol proxies are only used with Ad blocking set to ttv.lol."
         ),
     }
 
@@ -1079,6 +1186,7 @@ def _run_measure_bandwidth(settings: dict) -> dict:
             quality=_resolve_stream_quality(effective_settings),
             low_latency=False,
             fast_startup=False,
+            player_type=_player_type(effective_settings),
         )
         output_profile = streamlink_setup.get_or_create_media_server_output_profile()
         profile_update = {
@@ -1229,31 +1337,41 @@ def _save_schedule_state(settings: dict, state: dict) -> None:
     os.replace(tmp, path)
 
 
+_LOCK_FDS: dict[str, int] = {}
+
+
 def _job_lock(settings: dict, name: str, ttl_seconds: int = 3600) -> str:
+    """Take a cross-process job lock, or return "" when another process has it.
+
+    flock() on a file in the data directory: the kernel releases it when the
+    holding process ends, so a lock left by a crash or container restart can
+    never block the job (the old create-exclusive lock file survived those
+    and blocked until its TTL; taking over a stale one was racy).
+    `ttl_seconds` is kept for callers; a hung holder is ended by Dispatcharr.
+    """
     os.makedirs(_data_dir(settings), exist_ok=True)
     path = os.path.join(_data_dir(settings), f".{name}.lock")
+    if path in _LOCK_FDS:
+        return ""  # already held by this process
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        try:
-            if time.time() - os.path.getmtime(path) > ttl_seconds:
-                os.unlink(path)
-        except FileNotFoundError:
-            # Released (or cleared as stale) by another process in between.
-            pass
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(f"{os.getpid()} {int(time.time())}\n")
-        return path
-    except FileExistsError:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
         return ""
+    os.ftruncate(fd, 0)
+    os.write(fd, f"{os.getpid()} {int(time.time())}\n".encode())
+    _LOCK_FDS[path] = fd
+    return path
 
 
 def _release_job_lock(path: str) -> None:
-    if not path:
-        return
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
+    fd = _LOCK_FDS.pop(path, None)
+    if fd is not None:
+        try:
+            os.close(fd)  # closing releases the flock
+        except OSError:
+            pass
 
 
 def _interval_minutes(settings: dict) -> int:
@@ -1282,7 +1400,11 @@ def _guide_semantic_fingerprint(entries: list[dict]) -> str:
             "display_name": str(entry.get("display_name") or ""),
             "channel_name": str(entry.get("channel_name") or ""),
             "live": bool(entry.get("live")),
-            "title": str(entry.get("title") or ""),
+            # The programme title ends with the live viewer count, which changes
+            # every minute; hashing it made Emby re-read the whole guide (all
+            # tuners) on every 2-minute tick. Stream title and game are what a
+            # viewer notices; the count is refreshed by the max-age rule.
+            "stream_title": str(entry.get("stream_title") or ""),
             "game_name": str(entry.get("game_name") or ""),
             "channel_art": _stable_artwork_url(
                 entry.get("icon_url_stable") or entry.get("icon_url")
@@ -1390,6 +1512,7 @@ def _run_scheduled_tick() -> None:
                         refresh_media_server=refresh_media_server,
                     )
                     state = _load_schedule_state(settings)
+                    state.pop("last_epg_error", None)
                     state.update({
                         "last_epg_refresh": int(time.time()),
                         "last_epg_status": "ok",
@@ -1405,6 +1528,10 @@ def _run_scheduled_tick() -> None:
                             "last_media_server_refresh_at": int(time.time()),
                         })
                     _save_schedule_state(settings, state)
+                    try:
+                        _sync_media_logos(settings)
+                    except Exception:
+                        logger.exception("Twitcharr media-server logo update failed")
                     if _proxy_rank_due(settings, state, time.time()):
                         live_logins = [e.get("login") for e in prebuilt[2] if e.get("live") and e.get("login")]
                         try:

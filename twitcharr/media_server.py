@@ -12,6 +12,7 @@ The same code path works for:
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import time
@@ -49,7 +50,25 @@ def _normalize_url(url: str) -> str:
     url = (url or "").strip().rstrip("/")
     if url and not url.lower().startswith(("http://", "https://")):
         url = "http://" + url
+    if url:
+        # Credentials belong in the API-key setting; a "?api_key=..." pasted
+        # into the URL would otherwise end up in logs and action results.
+        url = _redact_url(url).rstrip("/") or url
     return url
+
+
+def _redact_url(url: str) -> str:
+    """Scheme, host and path only: tuner URLs can carry credentials."""
+    try:
+        parts = urlsplit(url or "")
+        host = parts.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"  # IPv6 literal
+        if parts.port:
+            host += f":{parts.port}"
+        return urlunsplit((parts.scheme, host, parts.path, "", ""))
+    except ValueError:
+        return ""
 
 
 def _extract_items(payload: Any) -> list[dict[str, Any]]:
@@ -165,7 +184,7 @@ def ensure_twitcharr_m3u_tuner(
                 update_error = str(exc)
                 continue
             if update_resp.status_code in (200, 204):
-                updated.append({"id": host_id, "old_url": old_url, "new_url": new_url})
+                updated.append({"id": host_id, "old_url": _redact_url(old_url), "new_url": _redact_url(new_url)})
                 update_error = ""
                 break
             update_error = f"{method} returned {update_resp.status_code}: {update_resp.text[:160]}"
@@ -309,6 +328,97 @@ def warm_live_tv_image_cache(*, base_url: str, api_key: str, max_images: int = I
         "failures": failures,
         "budget_exhausted": budget_exhausted,
     }
+
+
+LOGO_MAX_BYTES = 2_000_000
+LOGO_TIMEOUT = 10
+LOGO_BUDGET_S = 60
+
+
+def _is_jellyfin(session: requests.Session, base: str, headers: dict[str, str]) -> bool:
+    try:
+        info = session.get(f"{base}/System/Info/Public", headers=headers, timeout=TUNER_HOST_TIMEOUT).json()
+    except Exception:
+        return False
+    return "jellyfin" in str(info.get("ProductName") or "").lower()
+
+
+def sync_channel_logos(
+    *,
+    base_url: str,
+    api_key: str,
+    logos: dict[str, str],
+    uploaded: dict[str, dict[str, str]],
+) -> dict[str, Any]:
+    """Push the current channel logos to Emby/Jellyfin Live TV channels.
+
+    Emby downloads a tuner channel's logo once and never replaces it, so a
+    logo that follows the current game kept showing the first one forever
+    (and Twitcharr's old Dispatcharr logo URLs disappear when the category
+    changes). `logos` maps channel name -> image URL, `uploaded` is the
+    previous result (name -> {"id", "url"}); only channels whose logo or
+    media-server item changed are uploaded. Emby clients prefer
+    LogoLightColor, then LogoLight; Jellyfin has only Primary.
+    """
+    base = _normalize_url(base_url)
+    key = (api_key or "").strip()
+    if not base or not key:
+        return {"status": "skipped", "message": "Emby/Jellyfin URL or API key not configured", "uploaded": uploaded}
+    headers = _headers(key)
+    session = requests.Session()
+    deadline = time.monotonic() + LOGO_BUDGET_S
+    try:
+        resp = session.get(f"{base}/LiveTv/Channels", headers=headers,
+                           params={"EnableImages": "false", "Limit": "5000"}, timeout=DEFAULT_TIMEOUT)
+        resp.raise_for_status()
+        channels = _extract_items(resp.json())
+    except Exception as exc:
+        return {"status": "error", "message": f"Could not list Live TV channels: {type(exc).__name__}", "uploaded": uploaded}
+    by_name: dict[str, list[str]] = {}
+    for item in channels:
+        name = str(item.get("Name") or "")
+        if name in logos and item.get("Id"):
+            by_name.setdefault(name, []).append(str(item["Id"]))
+    image_types = ["Primary"] if _is_jellyfin(session, base, headers) else ["LogoLightColor", "LogoLight"]
+    result = dict(uploaded)
+    changed: list[str] = []
+    failed: list[str] = []
+    skipped: list[str] = []
+    for name, url in sorted(logos.items()):
+        ids = by_name.get(name) or []
+        if len(ids) != 1 or not url:
+            skipped.append(name)  # not in the media server yet, or ambiguous name
+            continue
+        item_id = ids[0]
+        if uploaded.get(name) == {"id": item_id, "url": url}:
+            continue
+        if time.monotonic() >= deadline:
+            break
+        try:
+            image = session.get(url, timeout=LOGO_TIMEOUT)
+            content_type = image.headers.get("Content-Type", "").split(";", 1)[0].strip()
+            if (image.status_code != 200 or not content_type.startswith("image/")
+                    or content_type == "image/svg+xml" or len(image.content) > LOGO_MAX_BYTES):
+                failed.append(name)
+                continue
+            for image_type in image_types:
+                up = session.post(f"{base}/Items/{item_id}/Images/{image_type}",
+                                  headers={**headers, "Content-Type": content_type},
+                                  data=base64.b64encode(image.content), timeout=DEFAULT_TIMEOUT)
+                if up.status_code not in (200, 204):
+                    raise RuntimeError(f"HTTP {up.status_code}")
+            result[name] = {"id": item_id, "url": url}
+            changed.append(name)
+        except Exception as exc:
+            logger.info("Could not update the %s logo in the media server: %s", name, type(exc).__name__)
+            failed.append(name)
+    for name in list(result):
+        if name not in logos:
+            result.pop(name)
+    status = "error" if failed and not changed else "ok"
+    message = f"Updated {len(changed)} channel logo(s)" + (f", {len(failed)} failed" if failed else "")
+    return {"status": status, "message": message, "changed": changed, "failed": failed,
+            "skipped": skipped, "uploaded": result}
 
 
 def trigger_guide_refresh(

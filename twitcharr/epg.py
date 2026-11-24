@@ -498,7 +498,7 @@ def _program_for_entry(e: dict, epg, now: datetime):
 
 
 @transaction.atomic
-def upsert_db(entries: list[dict], data_dir: str) -> dict:
+def upsert_db(entries: list[dict], data_dir: str, *, prune: bool = True) -> dict:
     """Write EPGData + ProgramData rows and link any pre-existing Channel.
 
     The Channel link step is what makes the guide appear instantly on the
@@ -555,9 +555,12 @@ def upsert_db(entries: list[dict], data_dir: str) -> dict:
         linked_channels += updated
 
     # Drop guide rows for channels that are no longer in the list
+    # Skipped when Twitch did not answer for some logins this cycle: their
+    # rows are missing from `entries` but the channels still exist.
     stale = EPGData.objects.filter(epg_source=source).exclude(tvg_id__in=seen_tvg_ids)
-    stale_count = stale.count()
-    stale.delete()
+    stale_count = stale.count() if prune else 0
+    if prune:
+        stale.delete()
 
     source.status = "success"
     source.last_message = (
