@@ -427,13 +427,18 @@ def _load_settings() -> dict:
 
 
 def _save_setting(key: str, value: Any) -> None:
+    from django.db import transaction
+
     from apps.plugins.models import PluginConfig
 
-    cfg = PluginConfig.objects.get(key=PLUGIN_KEY)
-    settings = dict(cfg.settings or {})
-    settings[key] = value
-    cfg.settings = settings
-    cfg.save(update_fields=["settings", "updated_at"])
+    # Lock the row like Dispatcharr's own settings save, so a settings form
+    # saved at the same moment cannot overwrite this value or vice versa.
+    with transaction.atomic():
+        cfg = PluginConfig.objects.select_for_update().get(key=PLUGIN_KEY)
+        settings = dict(cfg.settings or {})
+        settings[key] = value
+        cfg.settings = settings
+        cfg.save(update_fields=["settings", "updated_at"])
 
 
 def _data_dir(settings: dict) -> str:
@@ -498,6 +503,21 @@ def _resolve_stream_quality(settings: dict) -> str:
     return bandwidth.quality_chain_for_bandwidth(mbps, safety_margin_pct=BANDWIDTH_SAFETY_MARGIN_PCT)
 
 
+def _twitch_channel_playing() -> bool:
+    """True while any Twitcharr channel is being played through Dispatcharr."""
+    try:
+        from apps.channels.models import Channel
+        from apps.proxy.live_proxy.redis_keys import RedisKeys
+        from core.utils import RedisClient
+
+        client = RedisClient.get_client()
+        uuids = Channel.objects.filter(streams__custom_properties__owner="twitcharr").values_list("uuid", flat=True)
+        return any(client.exists(RedisKeys.channel_metadata(str(uuid))) for uuid in uuids.distinct())
+    except Exception:
+        logger.debug("Could not check for running Twitch channels", exc_info=True)
+        return False
+
+
 def _bandwidth_check_due(settings: dict, state: dict, now: float) -> bool:
     if _max_quality(settings) != "auto":
         return False
@@ -505,7 +525,11 @@ def _bandwidth_check_due(settings: dict, state: dict, now: float) -> bool:
         last = float(state.get("last_bandwidth_at") or 0)
     except (TypeError, ValueError):
         last = 0.0
-    return now - last >= BANDWIDTH_RECHECK_SECONDS
+    if now - last < BANDWIDTH_RECHECK_SECONDS:
+        return False
+    # A running stream would share the line with the speed test and make the
+    # measurement (the slowest of several probes) too low: try again later.
+    return not _twitch_channel_playing()
 
 
 # ---------------------------------------------------------------------------
