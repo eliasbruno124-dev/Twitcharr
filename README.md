@@ -166,7 +166,6 @@ for example `gronkh, top:de,en:25`.
 | Live indicator | `XMLTV <live /> tag` | Select the XMLTV tag, red-dot title prefix, both, or neither. |
 | Channel logo | `Twitch channel avatar` | Stable profile avatar by default; current game/category artwork remains optional. |
 | Programme artwork | `Current game/category artwork` | Box art of the game or category being streamed. `Live preview of the stream` shows a fresh frame of the stream instead, updated with every guide refresh. |
-| EPG refresh interval (minutes) | `2` | Background scheduler interval for Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV. Minimum is 1 minute. |
 | Ad blocker | `true` | Plays through the ad-free ttv.lol proxies: Twitcharr downloads the project's server list once a day, tests all servers every 10 minutes and uses the working ones best first (HTTP proxies only when no playlist proxy works). If Streamlink reports an ad anyway, before the first picture or mid-stream, Twitcharr switches once to a new session straight from Twitch as an embedded player, for which Twitch plays far fewer ads (in a test on 2026-11-24: no pre-roll in 24 starts, versus 4 of 24 through ttv.lol). Ads that still come through are filtered out by Streamlink; Twitcharr keeps the connection alive meanwhile. Off: plays the standard Twitch player. |
 | Emby / Jellyfin URL | empty | Optional media-server base URL, for example `http://emby:8096`. Without `http://` or `https://`, Twitcharr adds `http://`. Query parameters such as `?api_key=` are removed; the key belongs in the next field. |
 | Emby / Jellyfin API key | empty | Emby/Jellyfin API key, used for the guide refresh, the tuner URL and the logo upload. This is not a Twitch key. If only one of URL and key is set, actions report a warning. |
@@ -194,8 +193,9 @@ request. The scheduler checks every 30 seconds what is due:
 
 | Job | When |
 |---|---|
-| Twitch metadata, guide, Channels and Streams | Every **EPG refresh interval** (default 2 minutes). Skipped while the channel field is empty. |
-| Emby/Jellyfin `Refresh Guide` | After a refresh, only if the guide visibly changed (live/offline, stream title, category, names or artwork) or channels were created or changed. Otherwise once every 20 hours, before the 24-hour programmes would run out. Viewer counts alone do not trigger it. |
+| Twitch live check | Every 30 seconds (anonymous Twitch has no push). Skipped while the channel field is empty. |
+| Dispatcharr guide, Channels and Streams | Only when the check finds a visible change. Going live is applied at once; going offline must still hold about 30 seconds later, so short stream drops do not remove the channel. Without changes at most every 10 minutes (viewer counts, guide self-heal). |
+| Emby/Jellyfin `Refresh Guide` | Only if the guide visibly changed (live/offline, stream title, category, names or artwork) or channels were created or changed; changes within a minute are bundled into one refresh, a failed refresh is retried after 5 minutes. Otherwise once every 20 hours, before the 24-hour programmes would run out. Viewer counts alone do not trigger it. |
 | Emby/Jellyfin channel logos | After a refresh, only for logos that changed. A full check after every guide refresh the scheduler triggered, because the media server may recreate channel items then. Failed or unmatched logos are retried every 30 minutes. |
 | ttv.lol proxy ranking | Every 10 minutes while the ad blocker is on. |
 | ttv.lol update check | Once a day after midnight, server time. |
