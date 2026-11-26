@@ -1,6 +1,6 @@
 {
   "name": "Twitcharr",
-  "version": "1.3.5",
+  "version": "1.3.7",
   "description": "A polished Twitch Live TV lineup for Dispatcharr. Add channels or discovery rules, then sync channels, streams and XMLTV guide data using anonymous Twitch metadata only. No OAuth, Client ID, Client Secret or Twitch sign-in required.",
   "author": "eliasbruno124",
   "maintainers": ["eliasbruno124-dev"],
@@ -119,13 +119,6 @@
       "description": "Image shown for a live programme: the box art of the game or category being streamed, or a fresh preview frame of the stream, updated with every guide refresh."
     },
     {
-      "id": "epg_refresh_interval_minutes",
-      "label": "EPG refresh interval (minutes)",
-      "type": "number",
-      "default": 2,
-      "description": "How often Twitcharr refreshes live status, guide data and icons. Minimum: 1 minute."
-    },
-    {
       "id": "adblock",
       "label": "Ad blocker",
       "type": "boolean",
@@ -138,7 +131,7 @@
       "type": "text",
       "default": "",
       "placeholder": "http://jellyfin:8096",
-      "description": "Optional Emby or Jellyfin base URL. Twitcharr triggers Refresh Guide after each EPG update."
+      "description": "Optional Emby or Jellyfin base URL. Twitcharr triggers Refresh Guide when the guide visibly changes, otherwise once every 20 hours, and keeps the channel logos there up to date."
     },
     {
       "id": "media_server_api_key",
@@ -194,7 +187,7 @@
     {
       "id": "test_proxies",
       "label": "Test proxies",
-      "description": "Tests each configured ttv.lol proxy server and reports reachability, HTTP status, latency and the suggested cleanup result.",
+      "description": "Tests each ttv.lol proxy server and reports reachability, HTTP status, latency and the order currently used.",
       "button_label": "Test proxies",
       "button_variant": "outline",
       "button_color": "blue"
@@ -218,14 +211,14 @@
     {
       "id": "uninstall",
       "label": "Uninstall",
-      "description": "Removes the managed StreamProfile, EPG source, channels and streams, then refreshes Emby/Jellyfin once if configured.",
+      "description": "Removes the managed StreamProfile, OutputProfile, EPG source, channels, streams and unused Twitcharr logos, then refreshes Emby/Jellyfin once if configured.",
       "button_label": "Uninstall",
       "button_variant": "outline",
       "button_color": "red",
       "confirm": {
         "required": true,
         "title": "Remove all managed objects?",
-        "message": "Deletes the Twitch StreamProfile, EPG source and every channel or stream created by Twitcharr. The plugin and its settings stay in place. Emby/Jellyfin Refresh Guide is triggered afterwards if configured."
+        "message": "Deletes the Twitch StreamProfile, OutputProfile, EPG source and every channel or stream created by Twitcharr. The plugin and its settings stay in place. Emby/Jellyfin Refresh Guide is triggered afterwards if configured."
       }
     }
   ]
