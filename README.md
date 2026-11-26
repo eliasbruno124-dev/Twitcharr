@@ -6,6 +6,7 @@
   <a href="https://github.com/eliasbruno124-dev/Twitcharr/releases/latest"><img src="https://img.shields.io/github/v/release/eliasbruno124-dev/Twitcharr?label=release&color=9146FF" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/eliasbruno124-dev/Twitcharr?color=555" alt="MIT license"></a>
   <a href="https://github.com/Dispatcharr/Dispatcharr"><img src="https://img.shields.io/badge/plugin%20for-Dispatcharr-3BA776" alt="Plugin for Dispatcharr"></a>
+  <a href="https://paypal.me/eliasbruno123"><img src="https://img.shields.io/badge/donate-PayPal-0070BA?logo=paypal&logoColor=white" alt="Donate with PayPal"></a>
 </p>
 
 # Twitcharr
