@@ -1,6 +1,6 @@
 {
   "name": "Twitcharr",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "description": "A polished Twitch Live TV lineup for Dispatcharr. Add channels or discovery rules, then sync channels, streams and XMLTV guide data using anonymous Twitch metadata only. No OAuth, Client ID, Client Secret or Twitch sign-in required.",
   "author": "eliasbruno124",
   "maintainers": ["eliasbruno124-dev"],
@@ -117,13 +117,6 @@
         {"value": "live", "label": "Live preview of the stream"}
       ],
       "description": "Image shown for a live programme: the box art of the game or category being streamed, or a fresh preview frame of the stream, updated with every guide refresh."
-    },
-    {
-      "id": "epg_refresh_interval_minutes",
-      "label": "EPG refresh interval (minutes)",
-      "type": "number",
-      "default": 2,
-      "description": "How often Twitcharr refreshes live status, guide data and icons. Minimum: 1 minute."
     },
     {
       "id": "adblock",

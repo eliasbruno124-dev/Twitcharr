@@ -68,7 +68,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "description_separator": r"\n",
     "channel_logo_mode": "profile",
     "programme_artwork": "category",
-    "epg_refresh_interval_minutes": 2,
     "adblock": True,
     "max_quality": "auto",
     "connection_bandwidth_mbps": 0,
@@ -80,6 +79,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 # exception is data expiry: programmes are written for 24 hours, so an otherwise
 # unchanged guide is re-read once before it would run out on the server.
 MEDIA_SERVER_REFRESH_MAX_AGE_SECONDS = 20 * 60 * 60
+MEDIA_SERVER_REFRESH_MIN_SPACING_SECONDS = 60
+MEDIA_SERVER_REFRESH_RETRY_SECONDS = 5 * 60
+# Without a visible change, Dispatcharr's guide rows (viewer count, self-heal)
+# are rewritten at most this often; Twitch itself is checked every tick.
+FULL_SYNC_SECONDS = 10 * 60
 
 
 def _load_manifest() -> dict:
@@ -1375,10 +1379,6 @@ def _release_job_lock(path: str) -> None:
             pass
 
 
-def _interval_minutes(settings: dict) -> int:
-    return _int_setting(settings, "epg_refresh_interval_minutes", 2, min_value=1)
-
-
 def _stable_artwork_url(value: str | None) -> str:
     """Remove cache-busters that do not represent a guide-content change."""
     if not value:
@@ -1417,10 +1417,17 @@ def _guide_semantic_fingerprint(entries: list[dict]) -> str:
 
 
 def _scheduled_media_refresh_due(state: dict, fingerprint: str, now: float) -> bool:
-    last = float(state.get("last_media_server_refresh_at") or 0)
+    last_ok = float(state.get("last_media_server_refresh_at") or 0)
+    last_try = max(last_ok, float(state.get("last_media_server_attempt_at") or 0))
+    # Several changes within a minute are bundled into one media-server refresh
+    # (a refresh re-reads every tuner and takes 10-20 s on Emby); after a failed
+    # attempt the next one waits longer.
+    spacing = MEDIA_SERVER_REFRESH_RETRY_SECONDS if last_try > last_ok else MEDIA_SERVER_REFRESH_MIN_SPACING_SECONDS
+    if now - last_try < spacing:
+        return False
     return (
         state.get("last_guide_semantic_fingerprint") != fingerprint
-        or now - last >= MEDIA_SERVER_REFRESH_MAX_AGE_SECONDS
+        or now - last_ok >= MEDIA_SERVER_REFRESH_MAX_AGE_SECONDS
     )
 
 
@@ -1448,9 +1455,38 @@ def _ttvlol_due(settings: dict, state: dict, now: float) -> bool:
     return state.get("last_ttvlol_day") != today and now_minute >= _ttvlol_update_minute(settings)
 
 
-def _epg_due(settings: dict, state: dict, now: float) -> bool:
-    last = float(state.get("last_epg_refresh") or 0)
-    return now - last >= _interval_minutes(settings) * 60
+def _live_logins(entries: list[dict]) -> list[str]:
+    return sorted({str(e.get("login") or "").lower() for e in entries if e.get("live") and e.get("login")})
+
+
+def _media_server_configured(settings: dict) -> bool:
+    return bool(_text_setting(settings, "media_server_url") and _text_setting(settings, "media_server_api_key"))
+
+
+def _live_check_action(
+    state: dict, entries: list[dict], fingerprint: str, now: float, *, media_server: bool
+) -> str:
+    """Decide what one Twitch live check leads to.
+
+    Twitch is asked every scheduler tick (anonymous Twitch has no push), but
+    Dispatcharr and the media server are only written when something changed.
+    Going live is applied at once. Going offline must be seen on two checks in
+    a row, so a stream that drops for a few seconds does not remove and
+    re-create its channel.
+    """
+    last_full = float(state.get("last_epg_refresh") or 0)
+    if state.get("last_synced_fingerprint") == fingerprint:
+        if media_server and _scheduled_media_refresh_due(state, fingerprint, now):
+            return "sync"  # a media-server refresh is still owed (spacing, failure, expiry)
+        if now - last_full >= FULL_SYNC_SECONDS:
+            return "sync"  # viewer counts and Dispatcharr guide self-heal
+        return "unchanged"
+    previous = state.get("last_live_logins")
+    if isinstance(previous, list):
+        gone = set(previous) - set(_live_logins(entries))
+        if gone and not gone <= set(state.get("offline_pending") or []):
+            return "confirm-offline"
+    return "sync"
 
 
 def _settings_have_twitch_inputs(settings: dict) -> bool:
@@ -1488,7 +1524,8 @@ def _run_scheduled_tick() -> None:
             finally:
                 _release_job_lock(lock)
 
-    if _epg_due(settings, state, now):
+    # Twitch live check on every scheduler tick (anonymous Twitch has no push).
+    if True:
         lock = _job_lock(settings, "epg_refresh", ttl_seconds=30 * 60)
         if lock:
             try:
@@ -1503,46 +1540,69 @@ def _run_scheduled_tick() -> None:
                 else:
                     prebuilt = _gather_entries(settings)
                     fingerprint = _guide_semantic_fingerprint(prebuilt[2])
-                    refresh_media_server = _scheduled_media_refresh_due(
-                        state, fingerprint, now
+                    action = _live_check_action(
+                        state, prebuilt[2], fingerprint, now,
+                        media_server=_media_server_configured(settings),
                     )
-                    sync_result = _run_sync_channels(
-                        settings,
-                        prebuilt=prebuilt,
-                        warm_images=False,
-                        refresh_media_server=refresh_media_server,
-                    )
-                    state = _load_schedule_state(settings)
-                    state.pop("last_epg_error", None)
-                    state.update({
-                        "last_epg_refresh": int(time.time()),
-                        "last_epg_status": "ok",
-                        "last_epg_pid": os.getpid(),
-                        "last_epg_code": _CODE_ID,
-                        "last_sync_result": sync_result,
-                        "last_epg_result": sync_result.get("guide", {}),
-                        "last_media_server_refresh": sync_result.get("media_server_refresh", {}),
-                    })
-                    if sync_result.get("media_server_status") in {"ok", "partial"}:
-                        state.update({
-                            "last_guide_semantic_fingerprint": fingerprint,
-                            "last_media_server_refresh_at": int(time.time()),
-                        })
-                    _save_schedule_state(settings, state)
-                    try:
-                        _sync_media_logos(
+                    if action != "sync":
+                        state = _load_schedule_state(settings)
+                        state["last_live_check"] = int(time.time())
+                        state["last_live_check_action"] = action
+                        if action == "confirm-offline":
+                            state["offline_pending"] = sorted(
+                                set(state.get("last_live_logins") or []) - set(_live_logins(prebuilt[2]))
+                            )
+                        else:
+                            state.pop("offline_pending", None)
+                        _save_schedule_state(settings, state)
+                    else:
+                        refresh_media_server = _media_server_configured(
+                            settings
+                        ) and _scheduled_media_refresh_due(state, fingerprint, now)
+                        sync_result = _run_sync_channels(
                             settings,
-                            force=refresh_media_server
-                            and sync_result.get("media_server_status") in {"ok", "partial"},
+                            prebuilt=prebuilt,
+                            warm_images=False,
+                            refresh_media_server=refresh_media_server,
                         )
-                    except Exception:
-                        logger.exception("Twitcharr media-server logo update failed")
-                    if _proxy_rank_due(settings, state, time.time()):
-                        live_logins = [e.get("login") for e in prebuilt[2] if e.get("live") and e.get("login")]
+                        state = _load_schedule_state(settings)
+                        state.pop("last_epg_error", None)
+                        state.update({
+                            "last_epg_refresh": int(time.time()),
+                            "last_epg_status": "ok",
+                            "last_epg_pid": os.getpid(),
+                            "last_epg_code": _CODE_ID,
+                            "last_sync_result": sync_result,
+                            "last_epg_result": sync_result.get("guide", {}),
+                            "last_media_server_refresh": sync_result.get("media_server_refresh", {}),
+                            "last_live_check": int(time.time()),
+                            "last_live_check_action": "sync",
+                            "last_synced_fingerprint": fingerprint,
+                            "last_live_logins": _live_logins(prebuilt[2]),
+                        })
+                        if refresh_media_server:
+                            state["last_media_server_attempt_at"] = int(time.time())
+                        state.pop("offline_pending", None)
+                        if sync_result.get("media_server_status") in {"ok", "partial"}:
+                            state.update({
+                                "last_guide_semantic_fingerprint": fingerprint,
+                                "last_media_server_refresh_at": int(time.time()),
+                            })
+                        _save_schedule_state(settings, state)
                         try:
-                            _rank_proxies(settings, live_logins)
+                            _sync_media_logos(
+                                settings,
+                                force=refresh_media_server
+                                and sync_result.get("media_server_status") in {"ok", "partial"},
+                            )
                         except Exception:
-                            logger.exception("Twitcharr ttv.lol proxy ranking failed")
+                            logger.exception("Twitcharr media-server logo update failed")
+                        if _proxy_rank_due(settings, state, time.time()):
+                            live_logins = [e.get("login") for e in prebuilt[2] if e.get("live") and e.get("login")]
+                            try:
+                                _rank_proxies(settings, live_logins)
+                            except Exception:
+                                logger.exception("Twitcharr ttv.lol proxy ranking failed")
             except Exception as e:
                 logger.exception("Scheduled Twitcharr refresh failed")
                 state = _load_schedule_state(settings)
@@ -1698,7 +1758,7 @@ def _ensure_schedule_running() -> dict:
         "status": "ok",
         "scheduler": scheduler_state,
         "started_now": started,
-        "epg_refresh": f"every {_interval_minutes(merged)} minutes",
+        "epg_refresh": f"Twitch checked every {SCHEDULER_POLL_SECONDS} s; Dispatcharr and media server updated only on changes",
         "ttvlol_update": "check newest verified release daily at midnight (server time)",
         **_delete_legacy_celery_tasks(),
     }
