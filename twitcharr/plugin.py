@@ -1573,14 +1573,22 @@ def _run_scheduled_tick() -> None:
                     fingerprint = _guide_semantic_fingerprint(prebuilt[2])
                     sync_fingerprint = _sync_fingerprint(settings, fingerprint)
                     media_server = _media_server_configured(settings)
-                    if not _lookup_complete(prebuilt[0]):
-                        # A partial Twitch answer is not a change; wait for a full one.
-                        action = "lookup-incomplete"
-                    else:
-                        action = _live_check_action(
-                            state, prebuilt[2], fingerprint, sync_fingerprint, now,
-                            media_server=media_server,
+                    lookup_complete = _lookup_complete(prebuilt[0])
+                    action = _live_check_action(
+                        state, prebuilt[2], fingerprint, sync_fingerprint, now,
+                        media_server=media_server,
+                    )
+                    if action == "sync" and not lookup_complete and not (
+                        now - float(state.get("last_epg_refresh") or 0) >= FULL_SYNC_SECONDS
+                        or (
+                            media_server
+                            and now - float(state.get("last_media_server_refresh_at") or 0)
+                            >= MEDIA_SERVER_REFRESH_MAX_AGE_SECONDS
                         )
+                    ):
+                        # A partial Twitch answer is not a change; wait for a full
+                        # one. Due self-heal and expiry refreshes still run (prune off).
+                        action = "lookup-incomplete"
                     if action != "sync":
                         state = _load_schedule_state(settings)
                         state["last_live_check"] = int(time.time())
@@ -1627,8 +1635,8 @@ def _run_scheduled_tick() -> None:
                             "last_live_check": int(time.time()),
                             "last_live_check_action": "sync",
                         })
-                        if sync_result.get("status") != "error":
-                            # A failed sync is not remembered as done; the next tick retries.
+                        if sync_result.get("status") != "error" and lookup_complete:
+                            # A failed or partial sync is not remembered as done.
                             state["last_synced_fingerprint"] = sync_fingerprint
                             state["last_live_logins"] = _live_logins(prebuilt[2])
                         if sync_result.get("media_server_status") not in {None, "skipped"}:
@@ -1661,6 +1669,8 @@ def _run_scheduled_tick() -> None:
                     "last_epg_refresh": int(time.time()),
                     "last_epg_status": "error",
                     "last_epg_error": str(e),
+                    # Keeps the other worker processes from retrying at once.
+                    "last_live_check": int(time.time()),
                 })
                 _save_schedule_state(settings, state)
             finally:
