@@ -32,7 +32,7 @@ PLUGIN_KEY = "twitcharr"
 GITHUB_REPO = "eliasbruno124-dev/Twitcharr"
 GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
-DONATE_URL = "https://paypal.me/eliasbruno124"
+DONATE_URL = "https://paypal.me/eliasbruno123"
 OFFLINE_ARTWORK_URL = f"{GITHUB_RAW_URL}/twitcharr/assets/offline.png"
 # Fallback chains per maximum quality. 60 fps variants first: some streamers
 # only offer HD at 60 fps. Lower variants follow so a stream without the
