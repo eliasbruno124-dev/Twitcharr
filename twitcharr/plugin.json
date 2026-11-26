@@ -138,7 +138,7 @@
       "type": "text",
       "default": "",
       "placeholder": "http://jellyfin:8096",
-      "description": "Optional Emby or Jellyfin base URL. Twitcharr triggers Refresh Guide after each EPG update."
+      "description": "Optional Emby or Jellyfin base URL. Twitcharr triggers Refresh Guide when the guide visibly changes, otherwise once every 20 hours, and keeps the channel logos there up to date."
     },
     {
       "id": "media_server_api_key",
@@ -194,7 +194,7 @@
     {
       "id": "test_proxies",
       "label": "Test proxies",
-      "description": "Tests each configured ttv.lol proxy server and reports reachability, HTTP status, latency and the suggested cleanup result.",
+      "description": "Tests each ttv.lol proxy server and reports reachability, HTTP status, latency and the order currently used.",
       "button_label": "Test proxies",
       "button_variant": "outline",
       "button_color": "blue"
@@ -218,14 +218,14 @@
     {
       "id": "uninstall",
       "label": "Uninstall",
-      "description": "Removes the managed StreamProfile, EPG source, channels and streams, then refreshes Emby/Jellyfin once if configured.",
+      "description": "Removes the managed StreamProfile, OutputProfile, EPG source, channels, streams and unused Twitcharr logos, then refreshes Emby/Jellyfin once if configured.",
       "button_label": "Uninstall",
       "button_variant": "outline",
       "button_color": "red",
       "confirm": {
         "required": true,
         "title": "Remove all managed objects?",
-        "message": "Deletes the Twitch StreamProfile, EPG source and every channel or stream created by Twitcharr. The plugin and its settings stay in place. Emby/Jellyfin Refresh Guide is triggered afterwards if configured."
+        "message": "Deletes the Twitch StreamProfile, OutputProfile, EPG source and every channel or stream created by Twitcharr. The plugin and its settings stay in place. Emby/Jellyfin Refresh Guide is triggered afterwards if configured."
       }
     }
   ]

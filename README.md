@@ -54,7 +54,7 @@ change on Twitch's side can occasionally break a stream until it is fixed.
 | ttv.lol | Checks for and installs the newest stable streamlink-ttvlol release after SHA-256 verification. |
 | Offline channels | **Show offline channels** is on by default so Emby/Jellyfin lineups stay stable. Turn it off for a live-only lineup. |
 | Images | Uses stable Twitch channel avatars for channel logos and the game/category box art for programme images by default. A live preview frame of the stream and category logos are selectable. |
-| Media servers | Can trigger the Emby/Jellyfin `Refresh Guide` scheduled task when URL and API key are configured. The scheduler does this only when the guide visibly changes (live/offline, stream title, game, artwork), plus once every 20 hours before the 24-hour programmes would run out. Channel logos are sent only when they change; failed or unmatched logos are retried every 30 minutes. |
+| Media servers | With URL and API key set, triggers the Emby/Jellyfin `Refresh Guide` task when the guide visibly changes, keeps the tagged Twitch M3U tuner on the safe URL and uploads changed channel logos. See [Emby and Jellyfin](#emby-and-jellyfin). |
 
 ## Install
 
@@ -119,8 +119,9 @@ The `<output_profile_id>` is returned by **Sync now**, **Sync channels**, and
 so Twitcharr can keep this URL up to date automatically.
 
 Do not paste OAuth tokens, Client IDs, API keys, or Twitch account credentials into
-the channel field. Twitcharr ignores those and reports a settings error for obvious
-credential-looking input.
+the channel field. Twitcharr does not use them. A line containing `oauth` or
+starting with `client-id`, `client_id`, `client secret` or `client-secret` stops
+every action with a settings error.
 
 ## Discovery Tokens
 
@@ -139,8 +140,12 @@ credential-looking input.
 | `gronkh(family)` | Adds the channel and puts it into the Dispatcharr channel profile `family`. |
 | `top:de:25(Livestreams, TV)` | Adds the top 25 German streams to both profiles. |
 
-Category and search names with commas are ambiguous in a free-text field. Put
-those tokens on their own line.
+Without a number, `top`, `game:` and `search:` add 10 channels. The highest
+number is 100 for `top` and `game:`, and 50 for `search:`.
+
+Entries are separated by commas, semicolons or line breaks. Category and search
+names with commas or semicolons are therefore ambiguous; put those tokens on
+their own line.
 
 Multi-language `top` tokens can be mixed with other comma-separated entries,
 for example `gronkh, top:de,en:25`.
@@ -163,8 +168,8 @@ for example `gronkh, top:de,en:25`.
 | Programme artwork | `Current game/category artwork` | Box art of the game or category being streamed. `Live preview of the stream` shows a fresh frame of the stream instead, updated with every guide refresh. |
 | EPG refresh interval (minutes) | `2` | Background scheduler interval for Twitch metadata, Dispatcharr guide rows, Channels, Streams, and XMLTV. Minimum is 1 minute. |
 | Ad blocker | `true` | Plays through the ad-free ttv.lol proxies: Twitcharr downloads the project's server list once a day, tests all servers every 10 minutes and uses the working ones best first (HTTP proxies only when no playlist proxy works). If Streamlink reports an ad anyway, before the first picture or mid-stream, Twitcharr switches once to a new session straight from Twitch as an embedded player, for which Twitch plays far fewer ads (in a test on 2026-11-24: no pre-roll in 24 starts, versus 4 of 24 through ttv.lol). Ads that still come through are filtered out by Streamlink; Twitcharr keeps the connection alive meanwhile. Off: plays the standard Twitch player. |
-| Emby / Jellyfin URL | empty | Optional media-server base URL. |
-| Emby / Jellyfin API key | empty | API key for Emby/Jellyfin guide refresh only. This is not a Twitch key. |
+| Emby / Jellyfin URL | empty | Optional media-server base URL, for example `http://emby:8096`. Without `http://` or `https://`, Twitcharr adds `http://`. Query parameters such as `?api_key=` are removed; the key belongs in the next field. |
+| Emby / Jellyfin API key | empty | Emby/Jellyfin API key, used for the guide refresh, the tuner URL and the logo upload. This is not a Twitch key. If only one of URL and key is set, actions report a warning. |
 
 ## Actions
 
@@ -176,9 +181,48 @@ for example `gronkh, top:de,en:25`.
 | Full refresh | Runs ttv.lol update check, resolves Twitch inputs once, syncs Channels/Streams, writes guide data, and refreshes Emby/Jellyfin if configured. |
 | Measure bandwidth | Downloads a small Cloudflare speed-test payload, saves the measured Mbps value, recalculates automatic quality, and updates the StreamProfile and media-server OutputProfile. Runs by itself once a day when Maximum quality is Automatic. |
 | Test proxies | Tests all ttv.lol proxies (built-in and from the project list) and reports reachability, HTTP status, latency and the order currently used. |
-| Refresh Emby / Jellyfin | Triggers the configured server's `Refresh Guide` task. |
+| Refresh Emby / Jellyfin | Updates the tagged Twitch M3U tuner URL, triggers the server's `Refresh Guide` task, warms the image cache and uploads all changed channel logos. |
 | Update ttv.lol | Checks GitHub and installs or verifies the newest stable streamlink-ttvlol release, rejecting any SHA-256 mismatch. |
-| Uninstall | Deletes Twitcharr-managed Channels, Streams, StreamProfile, OutputProfile, and EPG source rows, then refreshes Emby/Jellyfin if configured. Plugin files and settings remain. |
+| Uninstall | Stops the scheduler, deletes Twitcharr-managed Channels, Streams, StreamProfile, OutputProfile, EPG source and Twitcharr logos no other channel uses, then refreshes Emby/Jellyfin if configured. Plugin files and settings remain. |
+
+## Background Refresh
+
+Dispatcharr's web workers run with gevent, where a blocking background thread
+would freeze the web interface. Twitcharr therefore runs its scheduler only in
+Dispatcharr's Celery worker processes. Actions still run directly in the web
+request. The scheduler checks every 30 seconds what is due:
+
+| Job | When |
+|---|---|
+| Twitch metadata, guide, Channels and Streams | Every **EPG refresh interval** (default 2 minutes). Skipped while the channel field is empty. |
+| Emby/Jellyfin `Refresh Guide` | After a refresh, only if the guide visibly changed (live/offline, stream title, category, names or artwork) or channels were created or changed. Otherwise once every 20 hours, before the 24-hour programmes would run out. Viewer counts alone do not trigger it. |
+| Emby/Jellyfin channel logos | After a refresh, only for logos that changed. A full check after every guide refresh the scheduler triggered, because the media server may recreate channel items then. Failed or unmatched logos are retried every 30 minutes. |
+| ttv.lol proxy ranking | Every 10 minutes while the ad blocker is on. |
+| ttv.lol update check | Once a day after midnight, server time. |
+| Bandwidth measurement | Once a day while **Maximum quality** is `Automatic`, postponed while a Twitch channel is playing. Running streams keep their quality. |
+
+## Emby and Jellyfin
+
+With **Emby / Jellyfin URL** and **API key** set, Twitcharr talks to the media
+server through its API. Emby 4.x and Jellyfin 10.8+ use the same calls.
+
+- Guide refresh: Twitcharr starts the scheduled task with the key `RefreshGuide`
+  (or a task whose name contains "refresh" and "guide") and waits up to 30
+  seconds for the run to finish. When a sync created or changed channels, it
+  triggers the task a second time after the EPG repair pass, so the media
+  server reads programmes that Dispatcharr re-parsed after the first run.
+- Tuner URL: every M3U tuner with the tag `Twitch` gets the Twitcharr
+  media-server M3U path (`output_format=mpegts` and the managed OutputProfile).
+  Host and port of the tuner stay as they are.
+- Channel logos: Emby keeps the first logo of a tuner channel forever, so
+  Twitcharr uploads the current Dispatcharr logo itself (Emby: `LogoLightColor`
+  and `LogoLight`, Jellyfin: `Primary`). Channels are matched by name; a name
+  that exists twice in the media server is skipped.
+- Image cache: manual actions ask the server for up to 80 channel and programme
+  images so they appear sooner, within a 25-second limit.
+
+Without URL and API key, all of this is skipped and Emby/Jellyfin read the
+guide on their own schedule.
 
 ## Offline Behavior
 
