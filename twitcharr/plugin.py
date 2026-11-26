@@ -76,7 +76,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "media_server_api_key": "",
 }
 
-MEDIA_SERVER_REFRESH_MAX_AGE_SECONDS = 15 * 60
+# The media server is refreshed only when the guide visibly changes. The one
+# exception is data expiry: programmes are written for 24 hours, so an otherwise
+# unchanged guide is re-read once before it would run out on the server.
+MEDIA_SERVER_REFRESH_MAX_AGE_SECONDS = 20 * 60 * 60
 
 
 def _load_manifest() -> dict:
@@ -975,9 +978,10 @@ def _current_channel_logos() -> dict[str, str]:
 def _sync_media_logos(settings: dict, *, force: bool = False) -> dict:
     """Keep the Emby/Jellyfin channel logos equal to Dispatcharr's.
 
-    Uploads only when a logo changed, plus a full check every 30 minutes
-    (media-server channel items can be recreated). After a failure the next
-    attempt waits 30 minutes instead of retrying on every scheduler tick.
+    Uploads only when a logo changed. The scheduler forces a full check after
+    each media-server guide refresh it triggered, because that is when channel
+    items get recreated. After a failure the next timed attempt waits 30
+    minutes instead of retrying on every scheduler tick.
     """
     from . import media_server
 
@@ -988,8 +992,9 @@ def _sync_media_logos(settings: dict, *, force: bool = False) -> dict:
     logos = _current_channel_logos()
     state = _load_schedule_state(settings)
     previous = state.get("media_logos") or {}
-    # Channels the media server could not match or whose logo failed: they
-    # wait for the 30-minute check instead of triggering a full run per tick.
+    # Channels the media server could not match or whose logo failed are
+    # retried every 30 minutes instead of triggering a full run per tick.
+    # Without such a failure, logos are only sent when one actually changes.
     pending = state.get("media_logos_pending") or {}
     now = time.time()
 
@@ -999,7 +1004,7 @@ def _sync_media_logos(settings: dict, *, force: bool = False) -> dict:
 
     unchanged = all(settled(name, logo) for name, logo in logos.items())
     checked = float(state.get("media_logos_checked") or 0)
-    if not force and unchanged and now - checked < MEDIA_LOGO_RECHECK_SECONDS:
+    if not force and unchanged and (not pending or now - checked < MEDIA_LOGO_RECHECK_SECONDS):
         return {"status": "unchanged", "message": "Channel logos are up to date"}
     result = media_server.sync_channel_logos(base_url=url, api_key=key, logos=logos, uploaded=previous)
     state = _load_schedule_state(settings)
@@ -1399,7 +1404,7 @@ def _guide_semantic_fingerprint(entries: list[dict]) -> str:
             # The programme title ends with the live viewer count, which changes
             # every minute; hashing it made Emby re-read the whole guide (all
             # tuners) on every 2-minute tick. Stream title and game are what a
-            # viewer notices; the count is refreshed by the max-age rule.
+            # viewer notices; the count follows with the next visible change.
             "stream_title": str(entry.get("stream_title") or ""),
             "game_name": str(entry.get("game_name") or ""),
             "channel_art": _stable_artwork_url(
@@ -1525,7 +1530,11 @@ def _run_scheduled_tick() -> None:
                         })
                     _save_schedule_state(settings, state)
                     try:
-                        _sync_media_logos(settings)
+                        _sync_media_logos(
+                            settings,
+                            force=refresh_media_server
+                            and sync_result.get("media_server_status") in {"ok", "partial"},
+                        )
                     except Exception:
                         logger.exception("Twitcharr media-server logo update failed")
                     if _proxy_rank_due(settings, state, time.time()):

@@ -54,7 +54,7 @@ change on Twitch's side can occasionally break a stream until it is fixed.
 | ttv.lol | Checks for and installs the newest stable streamlink-ttvlol release after SHA-256 verification. |
 | Offline channels | **Show offline channels** is on by default so Emby/Jellyfin lineups stay stable. Turn it off for a live-only lineup. |
 | Images | Uses stable Twitch channel avatars for channel logos and the game/category box art for programme images by default. A live preview frame of the stream and category logos are selectable. |
-| Media servers | Can trigger the Emby/Jellyfin `Refresh Guide` scheduled task when URL and API key are configured. |
+| Media servers | Can trigger the Emby/Jellyfin `Refresh Guide` scheduled task when URL and API key are configured. The scheduler does this only when the guide visibly changes (live/offline, stream title, game, artwork), plus once every 20 hours before the 24-hour programmes would run out. Channel logos are sent only when they change; failed or unmatched logos are retried every 30 minutes. |
 
 ## Install
 
