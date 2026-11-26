@@ -194,7 +194,7 @@ request. The scheduler checks every 30 seconds what is due:
 | Job | When |
 |---|---|
 | Twitch live check | Every 30 seconds (anonymous Twitch has no push). Skipped while the channel field is empty. |
-| Dispatcharr guide, Channels and Streams | Only when the check finds a visible change. Going live is applied at once; going offline must be seen on two checks in a row, so short stream drops do not remove the channel. Without changes at most every 10 minutes (viewer counts, guide self-heal). |
+| Dispatcharr guide, Channels and Streams | Only when the check finds a visible change. Going live is applied at once; going offline must still hold about 30 seconds later, so short stream drops do not remove the channel. Without changes at most every 10 minutes (viewer counts, guide self-heal). |
 | Emby/Jellyfin `Refresh Guide` | Only if the guide visibly changed (live/offline, stream title, category, names or artwork) or channels were created or changed; changes within a minute are bundled into one refresh, a failed refresh is retried after 5 minutes. Otherwise once every 20 hours, before the 24-hour programmes would run out. Viewer counts alone do not trigger it. |
 | Emby/Jellyfin channel logos | After a refresh, only for logos that changed. A full check after every guide refresh the scheduler triggered, because the media server may recreate channel items then. Failed or unmatched logos are retried every 30 minutes. |
 | ttv.lol proxy ranking | Every 10 minutes while the ad blocker is on. |
