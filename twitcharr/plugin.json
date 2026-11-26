@@ -1,6 +1,6 @@
 {
   "name": "Twitcharr",
-  "version": "1.3.5",
+  "version": "1.3.6",
   "description": "A polished Twitch Live TV lineup for Dispatcharr. Add channels or discovery rules, then sync channels, streams and XMLTV guide data using anonymous Twitch metadata only. No OAuth, Client ID, Client Secret or Twitch sign-in required.",
   "author": "eliasbruno124",
   "maintainers": ["eliasbruno124-dev"],
@@ -138,7 +138,7 @@
       "type": "text",
       "default": "",
       "placeholder": "http://jellyfin:8096",
-      "description": "Optional Emby or Jellyfin base URL. Twitcharr triggers Refresh Guide when the guide content changes, at least every 15 minutes, and keeps the channel logos there up to date."
+      "description": "Optional Emby or Jellyfin base URL. Twitcharr triggers Refresh Guide when the guide visibly changes, otherwise once every 20 hours, and keeps the channel logos there up to date."
     },
     {
       "id": "media_server_api_key",

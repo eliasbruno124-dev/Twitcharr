@@ -54,7 +54,7 @@ change on Twitch's side can occasionally break a stream until it is fixed.
 | ttv.lol | Checks for and installs the newest stable streamlink-ttvlol release after SHA-256 verification. |
 | Offline channels | **Show offline channels** is on by default so Emby/Jellyfin lineups stay stable. Turn it off for a live-only lineup. |
 | Images | Uses stable Twitch channel avatars for channel logos and the game/category box art for programme images by default. A live preview frame of the stream and category logos are selectable. |
-| Media servers | With URL and API key set, triggers the Emby/Jellyfin `Refresh Guide` task when the guide content changes, keeps the tagged Twitch M3U tuner on the safe URL and uploads changed channel logos. See [Emby and Jellyfin](#emby-and-jellyfin). |
+| Media servers | With URL and API key set, triggers the Emby/Jellyfin `Refresh Guide` task when the guide visibly changes, keeps the tagged Twitch M3U tuner on the safe URL and uploads changed channel logos. See [Emby and Jellyfin](#emby-and-jellyfin). |
 
 ## Install
 
@@ -195,8 +195,8 @@ request. The scheduler checks every 30 seconds what is due:
 | Job | When |
 |---|---|
 | Twitch metadata, guide, Channels and Streams | Every **EPG refresh interval** (default 2 minutes). Skipped while the channel field is empty. |
-| Emby/Jellyfin `Refresh Guide` | After a refresh, only if the guide content changed (live status, stream title, category, names or artwork) or the last refresh is 15 minutes old. Viewer counts alone do not trigger it. |
-| Emby/Jellyfin channel logos | After a refresh, for logos that changed; a full check every 30 minutes. |
+| Emby/Jellyfin `Refresh Guide` | After a refresh, only if the guide visibly changed (live/offline, stream title, category, names or artwork) or channels were created or changed. Otherwise once every 20 hours, before the 24-hour programmes would run out. Viewer counts alone do not trigger it. |
+| Emby/Jellyfin channel logos | After a refresh, only for logos that changed. A full check after every guide refresh the scheduler triggered, because the media server may recreate channel items then. Failed or unmatched logos are retried every 30 minutes. |
 | ttv.lol proxy ranking | Every 10 minutes while the ad blocker is on. |
 | ttv.lol update check | Once a day after midnight, server time. |
 | Bandwidth measurement | Once a day while **Maximum quality** is `Automatic`, postponed while a Twitch channel is playing. Running streams keep their quality. |
