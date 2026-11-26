@@ -978,9 +978,10 @@ def _current_channel_logos() -> dict[str, str]:
 def _sync_media_logos(settings: dict, *, force: bool = False) -> dict:
     """Keep the Emby/Jellyfin channel logos equal to Dispatcharr's.
 
-    Uploads only when a logo changed, plus a full check every 30 minutes
-    (media-server channel items can be recreated). After a failure the next
-    attempt waits 30 minutes instead of retrying on every scheduler tick.
+    Uploads only when a logo changed. The scheduler forces a full check after
+    each media-server guide refresh it triggered, because that is when channel
+    items get recreated. After a failure the next timed attempt waits 30
+    minutes instead of retrying on every scheduler tick.
     """
     from . import media_server
 
@@ -1529,7 +1530,11 @@ def _run_scheduled_tick() -> None:
                         })
                     _save_schedule_state(settings, state)
                     try:
-                        _sync_media_logos(settings)
+                        _sync_media_logos(
+                            settings,
+                            force=refresh_media_server
+                            and sync_result.get("media_server_status") in {"ok", "partial"},
+                        )
                     except Exception:
                         logger.exception("Twitcharr media-server logo update failed")
                     if _proxy_rank_due(settings, state, time.time()):
